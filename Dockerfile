@@ -65,6 +65,23 @@ RUN ARCH="$(dpkg --print-architecture)" \
 	&& curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /usr/local/bin/kubectl \
 	&& chmod +x /usr/local/bin/kubectl
 
+# AWS CLI v2
+RUN ARCH="$(uname -m)" \
+	&& curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o /tmp/awscliv2.zip \
+	&& unzip -q /tmp/awscliv2.zip -d /tmp \
+	&& /tmp/aws/install \
+	&& rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# Google Cloud CLI
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+	&& echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends google-cloud-cli \
+	&& rm -rf /var/lib/apt/lists/*
+
+# rclone
+RUN curl -fsSL https://rclone.org/install.sh | bash
+
 RUN useradd --uid 10001 --create-home --shell /bin/bash butterbox \
 	&& mkdir -p /workspace \
 	&& chown -R butterbox:butterbox /workspace \
