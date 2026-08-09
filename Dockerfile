@@ -29,7 +29,7 @@ RUN apt-get update \
 		ripgrep \
 		sudo \
 		unzip \
-		vim-tiny \
+		vim \
 		wget \
 		xz-utils \
 		zip \
@@ -58,6 +58,12 @@ RUN ARCH="$(dpkg --print-architecture)" \
 	&& curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tgz \
 	&& tar -C /usr/local -xzf /tmp/go.tgz \
 	&& rm /tmp/go.tgz
+
+# kubectl (latest stable at build time)
+RUN ARCH="$(dpkg --print-architecture)" \
+	&& KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)" \
+	&& curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /usr/local/bin/kubectl \
+	&& chmod +x /usr/local/bin/kubectl
 
 RUN useradd --uid 10001 --create-home --shell /bin/bash butterbox \
 	&& mkdir -p /workspace \
