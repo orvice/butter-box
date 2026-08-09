@@ -8,6 +8,10 @@ It exposes a `streamable HTTP` endpoint and provides 3 tools by default:
 - `WriteFile`
 - `Bash`
 
+It also provides an MCP prompt:
+
+- `sandbox_task` — instructions for completing a task inside the sandbox; optional `task` argument appends the concrete task to carry out
+
 It is designed to run well inside Docker, with environment variables for the listen address, sandbox root, and bearer token authentication.
 
 ## Pre-installed Environment

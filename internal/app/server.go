@@ -163,6 +163,8 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 		return textResult(resultText), out, nil
 	})
 
+	addPrompts(server, cfg)
+
 	return server
 }
 
