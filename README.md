@@ -18,6 +18,7 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - **Python** 3.12 + pip + venv (`PIP_BREAK_SYSTEM_PACKAGES=1`, so `pip install` works out of the box)
 - **Go** 1.26 toolchain (`GOPATH=~/go`, `~/go/bin` on `PATH`)
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`
+- [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
 
 ## Local Run
 
@@ -69,7 +70,13 @@ services:
       SANDBOX_SHELL: "/bin/bash"
     volumes:
       - /tmp/sandbox-workspace:/workspace
+      # Persist the butterbox user's home dir: CLI auth state (e.g. gws
+      # OAuth tokens), npm/pip/go user installs, shell history, etc.
+      - butterbox-home:/home/butterbox
     restart: unless-stopped
+
+volumes:
+  butterbox-home:
 ```
 
 Start it with:

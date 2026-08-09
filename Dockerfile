@@ -49,6 +49,10 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 	&& apt-get install -y --no-install-recommends nodejs \
 	&& rm -rf /var/lib/apt/lists/*
 
+# Google Workspace CLI (gws), installed system-wide
+RUN npm install -g @googleworkspace/cli \
+	&& npm cache clean --force
+
 # Go toolchain
 RUN ARCH="$(dpkg --print-architecture)" \
 	&& curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tgz \
