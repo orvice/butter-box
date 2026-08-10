@@ -49,9 +49,17 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 	&& apt-get install -y --no-install-recommends nodejs \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Google Workspace CLI (gws), installed system-wide
-RUN npm install -g @googleworkspace/cli \
+# Google Workspace CLI (gws) & Todoist CLI (td), installed system-wide
+RUN npm install -g @googleworkspace/cli @doist/todoist-cli \
 	&& npm cache clean --force
+
+# GitHub CLI (gh)
+RUN wget -nv -O /tmp/githubcli-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+	&& install -o root -g root -m 644 /tmp/githubcli-keyring.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends gh \
+	&& rm -rf /var/lib/apt/lists/* /tmp/githubcli-keyring.gpg
 
 # Go toolchain
 RUN ARCH="$(dpkg --print-architecture)" \
@@ -83,7 +91,12 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dea
 RUN curl -fsSL https://rclone.org/install.sh | bash
 
 # gog cli
-RUN go install github.com/openclaw/gogcli/cmd/gog@latest
+RUN GOPATH=/tmp/gopath GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/openclaw/gogcli/cmd/gog@latest \
+	&& rm -rf /tmp/gopath
+
+# GitLab CLI (glab)
+RUN GOPATH=/tmp/gopath GOBIN=/usr/local/bin /usr/local/go/bin/go install gitlab.com/gitlab-org/cli/cmd/glab@latest \
+	&& rm -rf /tmp/gopath
 
 RUN useradd --uid 10001 --create-home --shell /bin/bash butterbox \
 	&& mkdir -p /workspace \
