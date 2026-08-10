@@ -13,6 +13,7 @@ FROM ubuntu:24.04
 
 ARG GO_VERSION=1.26.5
 ARG NODE_MAJOR=22
+ARG LOKI_VERSION=3.7.6
 
 # Base CLI tools
 RUN apt-get update \
@@ -89,6 +90,12 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dea
 
 # rclone
 RUN curl -fsSL https://rclone.org/install.sh | bash
+
+# logcli (Grafana Loki CLI)
+RUN ARCH="$(dpkg --print-architecture)" \
+	&& curl -fsSL "https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}/logcli_${LOKI_VERSION}_${ARCH}.deb" -o /tmp/logcli.deb \
+	&& dpkg -i /tmp/logcli.deb \
+	&& rm /tmp/logcli.deb
 
 # gog cli
 RUN GOPATH=/tmp/gopath GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/openclaw/gogcli/cmd/gog@latest \
