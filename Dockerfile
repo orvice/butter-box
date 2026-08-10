@@ -82,6 +82,9 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dea
 # rclone
 RUN curl -fsSL https://rclone.org/install.sh | bash
 
+# gog cli
+RUN go install github.com/openclaw/gogcli/cmd/gog@latest
+
 RUN useradd --uid 10001 --create-home --shell /bin/bash butterbox \
 	&& mkdir -p /workspace \
 	&& chown -R butterbox:butterbox /workspace \
