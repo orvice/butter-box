@@ -1,18 +1,18 @@
 # ButterBox
 
-ButterBox is a sandbox MCP server for agents, built with [github.com/modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk). It ships as an Ubuntu-based container image with common toolchains pre-installed, so agents get an isolated, ready-to-use execution environment separate from where the agent itself runs.
+ButterBox is a personal VM for agents, exposed over MCP and built with [github.com/modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk). It ships as an Ubuntu-based container image with common toolchains and CLI tools pre-installed — an always-on machine your agent can drive, isolated from where the agent itself runs, with a home directory that persists across sessions.
 
 It exposes a `streamable HTTP` endpoint and provides 3 tools by default:
 
 - `ReadFile`
 - `WriteFile`
-- `Bash`
+- `ExecCommand`
 
 It also provides an MCP prompt:
 
-- `sandbox_task` — instructions for completing a task inside the sandbox; optional `task` argument appends the concrete task to carry out
+- `exec_task` — instructions for completing a task on the VM; optional `task` argument appends the concrete task to carry out
 
-It is designed to run well inside Docker, with environment variables for the listen address, sandbox root, and bearer token authentication.
+It is designed to run well inside Docker, with environment variables for the listen address, workspace root, and bearer token authentication.
 
 ## Pre-installed Environment
 
@@ -22,7 +22,8 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - **Python** 3.12 + pip + venv (`PIP_BREAK_SYSTEM_PACKAGES=1`, so `pip install` works out of the box)
 - **Go** 1.26 toolchain (`GOPATH=~/go`, `~/go/bin` on `PATH`)
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`, `kubectl`
-- Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`
+- Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`, `logcli` (Grafana Loki)
+- Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), `gog`, `td` (Todoist)
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
 
 ## Local Run
@@ -95,8 +96,8 @@ docker compose up -d
 - `MCP_ADDR`: HTTP listen address, default `:8080`
 - `MCP_HTTP_PATH`: MCP HTTP path, default `/mcp`
 - `MCP_AUTH_TOKEN`: when set, requires `Authorization: Bearer <token>`
-- `SANDBOX_ROOT`: root directory for file access and command execution, default current directory
-- `SANDBOX_SHELL`: shell used by the `Bash` tool, default `bash`
+- `SANDBOX_ROOT`: workspace root for file access and command execution, default current directory
+- `SANDBOX_SHELL`: shell used by the `ExecCommand` tool, default `bash`
 - `MCP_STATELESS`: enable stateless streamable HTTP mode, default `false`
 - `MCP_JSON_RESPONSE`: prefer `application/json` responses, default `false`
 
@@ -147,7 +148,7 @@ Request payload:
 }
 ```
 
-### `Bash`
+### `ExecCommand`
 
 Request payload:
 
@@ -172,5 +173,5 @@ The result includes:
 ## Notes
 
 - All file paths are constrained to `SANDBOX_ROOT` to prevent path escape.
-- The `Bash` tool working directory is also constrained to `SANDBOX_ROOT`.
+- The `ExecCommand` tool working directory is also constrained to `SANDBOX_ROOT`.
 - Command output is truncated to avoid returning excessively large responses.
