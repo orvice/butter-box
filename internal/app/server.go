@@ -19,7 +19,7 @@ const (
 )
 
 type readFileParams struct {
-	Path string `json:"path" jsonschema:"Path to a file inside the sandbox root"`
+	Path string `json:"path" jsonschema:"Path to a file inside the workspace root"`
 }
 
 type readFileResult struct {
@@ -28,7 +28,7 @@ type readFileResult struct {
 }
 
 type writeFileParams struct {
-	Path       string `json:"path" jsonschema:"Path to a file inside the sandbox root"`
+	Path       string `json:"path" jsonschema:"Path to a file inside the workspace root"`
 	Content    string `json:"content" jsonschema:"Full file content to write"`
 	CreateDirs bool   `json:"createDirs,omitempty" jsonschema:"Create parent directories when true"`
 }
@@ -40,8 +40,8 @@ type writeFileResult struct {
 }
 
 type execParams struct {
-	Command        string            `json:"command" jsonschema:"Shell command to execute inside the sandbox"`
-	Cwd            string            `json:"cwd,omitempty" jsonschema:"Optional working directory relative to the sandbox root"`
+	Command        string            `json:"command" jsonschema:"Shell command to execute on the ButterBox VM"`
+	Cwd            string            `json:"cwd,omitempty" jsonschema:"Optional working directory relative to the workspace root"`
 	TimeoutSeconds int               `json:"timeoutSeconds,omitempty" jsonschema:"Optional timeout in seconds, defaults to 30"`
 	Env            map[string]string `json:"env,omitempty" jsonschema:"Optional environment variables for the command"`
 }
@@ -61,7 +61,7 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "ReadFile",
-		Description: "Read the full content of a file inside the sandbox root",
+		Description: "Read the full content of a file inside the workspace root",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in readFileParams) (*mcp.CallToolResult, readFileResult, error) {
 		target, err := resolveSandboxPath(cfg.Root, in.Path)
 		if err != nil {
@@ -82,7 +82,7 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "WriteFile",
-		Description: "Write full content to a file inside the sandbox root",
+		Description: "Write full content to a file inside the workspace root",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in writeFileParams) (*mcp.CallToolResult, writeFileResult, error) {
 		target, err := resolveSandboxPath(cfg.Root, in.Path)
 		if err != nil {
@@ -112,7 +112,7 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "ExecCommand",
-		Description: "Execute a shell command inside the sandbox root",
+		Description: "Execute a shell command inside the workspace root",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in execParams) (*mcp.CallToolResult, execResult, error) {
 		if strings.TrimSpace(in.Command) == "" {
 			return nil, execResult{}, errors.New("command is required")
@@ -186,7 +186,7 @@ func resolveSandboxPath(root, userPath string) (string, error) {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes sandbox root %q", userPath, root)
+		return "", fmt.Errorf("path %q escapes workspace root %q", userPath, root)
 	}
 	return candidate, nil
 }
