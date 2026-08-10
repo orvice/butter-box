@@ -39,14 +39,14 @@ type writeFileResult struct {
 	Created bool   `json:"created"`
 }
 
-type bashParams struct {
+type execParams struct {
 	Command        string            `json:"command" jsonschema:"Shell command to execute inside the sandbox"`
 	Cwd            string            `json:"cwd,omitempty" jsonschema:"Optional working directory relative to the sandbox root"`
 	TimeoutSeconds int               `json:"timeoutSeconds,omitempty" jsonschema:"Optional timeout in seconds, defaults to 30"`
 	Env            map[string]string `json:"env,omitempty" jsonschema:"Optional environment variables for the command"`
 }
 
-type bashResult struct {
+type execResult struct {
 	Cwd      string `json:"cwd"`
 	ExitCode int    `json:"exitCode"`
 	Stdout   string `json:"stdout"`
@@ -111,11 +111,11 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "Bash",
+		Name:        "ExecCommand",
 		Description: "Execute a shell command inside the sandbox root",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bashParams) (*mcp.CallToolResult, bashResult, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in execParams) (*mcp.CallToolResult, execResult, error) {
 		if strings.TrimSpace(in.Command) == "" {
-			return nil, bashResult{}, errors.New("command is required")
+			return nil, execResult{}, errors.New("command is required")
 		}
 
 		cwd := cfg.Root
@@ -123,7 +123,7 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 		if strings.TrimSpace(in.Cwd) != "" {
 			cwd, err = resolveSandboxPath(cfg.Root, in.Cwd)
 			if err != nil {
-				return nil, bashResult{}, err
+				return nil, execResult{}, err
 			}
 		}
 
@@ -146,11 +146,11 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 		if err != nil && exitCode == 0 {
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) {
-				return nil, bashResult{}, err
+				return nil, execResult{}, err
 			}
 		}
 
-		out := bashResult{
+		out := execResult{
 			Cwd:      cwd,
 			ExitCode: exitCode,
 			Stdout:   stdout,

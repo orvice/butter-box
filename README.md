@@ -6,11 +6,11 @@ It exposes a `streamable HTTP` endpoint and provides 3 tools by default:
 
 - `ReadFile`
 - `WriteFile`
-- `Bash`
+- `ExecCommand`
 
 It also provides an MCP prompt:
 
-- `sandbox_task` — instructions for completing a task inside the sandbox; optional `task` argument appends the concrete task to carry out
+- `exec_task` — instructions for completing a task inside the sandbox; optional `task` argument appends the concrete task to carry out
 
 It is designed to run well inside Docker, with environment variables for the listen address, sandbox root, and bearer token authentication.
 
@@ -23,6 +23,7 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - **Go** 1.26 toolchain (`GOPATH=~/go`, `~/go/bin` on `PATH`)
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`, `kubectl`
 - Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`
+- Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), `gog`, `td` (Todoist)
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
 
 ## Local Run
@@ -96,7 +97,7 @@ docker compose up -d
 - `MCP_HTTP_PATH`: MCP HTTP path, default `/mcp`
 - `MCP_AUTH_TOKEN`: when set, requires `Authorization: Bearer <token>`
 - `SANDBOX_ROOT`: root directory for file access and command execution, default current directory
-- `SANDBOX_SHELL`: shell used by the `Bash` tool, default `bash`
+- `SANDBOX_SHELL`: shell used by the `ExecCommand` tool, default `bash`
 - `MCP_STATELESS`: enable stateless streamable HTTP mode, default `false`
 - `MCP_JSON_RESPONSE`: prefer `application/json` responses, default `false`
 
@@ -147,7 +148,7 @@ Request payload:
 }
 ```
 
-### `Bash`
+### `ExecCommand`
 
 Request payload:
 
@@ -172,5 +173,5 @@ The result includes:
 ## Notes
 
 - All file paths are constrained to `SANDBOX_ROOT` to prevent path escape.
-- The `Bash` tool working directory is also constrained to `SANDBOX_ROOT`.
+- The `ExecCommand` tool working directory is also constrained to `SANDBOX_ROOT`.
 - Command output is truncated to avoid returning excessively large responses.

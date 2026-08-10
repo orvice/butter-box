@@ -13,13 +13,13 @@ const sandboxGuide = `You have access to ButterBox, an isolated Ubuntu sandbox e
 Available tools:
 - ReadFile: read the full content of a file inside the sandbox root
 - WriteFile: write full content to a file (set createDirs to create parent directories)
-- Bash: run shell commands (bash) with optional cwd, timeoutSeconds, and env
+- ExecCommand: run shell commands (bash) with optional cwd, timeoutSeconds, and env
 
 Environment:
 - Ubuntu 24.04, running as user "butterbox" with passwordless sudo (system packages: sudo apt-get install ...)
 - Toolchains: Node.js 22 (npm), Python 3.12 (pip works out of the box), Go 1.26
 - CLI tools: git, curl, wget, jq, ripgrep, unzip, zip, build-essential, vim, kubectl, aws, gcloud, rclone, gws (Google Workspace CLI)
-- All file paths and working directories are confined to the sandbox root (%s); the Bash working directory defaults to it
+- All file paths and working directories are confined to the sandbox root (%s); the ExecCommand working directory defaults to it
 
 Guidelines:
 - Prefer running commands and inspecting real output over guessing
@@ -28,9 +28,9 @@ Guidelines:
 
 func addPrompts(server *mcp.Server, cfg *Config) {
 	server.AddPrompt(&mcp.Prompt{
-		Name:        "sandbox_task",
+		Name:        "exec_task",
 		Title:       "Run a task in the ButterBox sandbox",
-		Description: "Instructions for completing a task inside the ButterBox sandbox using its ReadFile, WriteFile, and Bash tools",
+		Description: "Instructions for completing a task inside the ButterBox sandbox using its ReadFile, WriteFile, and ExecCommand tools",
 		Arguments: []*mcp.PromptArgument{
 			{
 				Name:        "task",
