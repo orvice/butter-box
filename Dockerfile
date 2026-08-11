@@ -45,6 +45,9 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& ln -sf /usr/bin/python3 /usr/local/bin/python
 
+# toot (Mastodon CLI, https://toot.bezdomni.net)
+RUN pip3 install --no-cache-dir --break-system-packages "toot[images]"
+
 # Node.js (NodeSource)
 RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 	&& apt-get install -y --no-install-recommends nodejs \
