@@ -53,8 +53,13 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 	&& apt-get install -y --no-install-recommends nodejs \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Google Workspace CLI (gws) & Todoist CLI (td), installed system-wide
-RUN npm install -g @googleworkspace/cli @doist/todoist-cli \
+# Node.js CLIs, installed system-wide
+RUN npm install -g \
+		@doist/todoist-cli \
+		@earendil-works/pi-coding-agent \
+		@googleworkspace/cli \
+		@openai/codex \
+		opencode-ai \
 	&& npm cache clean --force
 
 # GitHub CLI (gh)

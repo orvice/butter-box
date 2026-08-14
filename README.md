@@ -24,6 +24,7 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`, `kubectl`
 - Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`, `logcli` (Grafana Loki)
 - Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), `gog`, `td` (Todoist)
+- Coding agent CLIs: `codex`, `opencode`, `pi`
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
 
 ## Local Run
