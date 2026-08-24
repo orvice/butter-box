@@ -24,7 +24,7 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`, `kubectl`
 - Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`, `logcli` (Grafana Loki)
 - Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), `gog`, `td` (Todoist)
-- Coding agent CLIs: `codex`, `opencode` (`/usr/bin/opencode`), `pi`
+- Coding agent CLIs: `codex`, `opencode` (`/usr/bin/opencode`), `pi`, `pi-web` ([@agegr/pi-web](https://github.com/agegr/pi-web), browser UI for `pi`)
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
 
 ## Local Run
@@ -101,6 +101,23 @@ docker compose up -d
 - `SANDBOX_SHELL`: shell used by the `ExecCommand` tool, default `bash`
 - `MCP_STATELESS`: enable stateless streamable HTTP mode, default `false`
 - `MCP_JSON_RESPONSE`: prefer `application/json` responses, default `false`
+- `PI_WEB_ENABLED`: run [pi-web](https://github.com/agegr/pi-web) as a supervised child process and reverse-proxy it, default `false`
+- `PI_WEB_PASSWORD`: required when `PI_WEB_ENABLED` is set; enables pi-web's built-in HTTP Basic Auth (username is always `pi`)
+- `PI_WEB_PORT`: internal port pi-web listens on (loopback only), default `30141`
+
+## Pi Web
+
+When `PI_WEB_ENABLED=true`, the server launches `pi-web` bound to `127.0.0.1` and reverse-proxies it at `/` on the main listen address (`/mcp` and `/healthz` keep precedence). The child process is restarted with backoff if it exits, and pi-web's own Basic Auth protects the UI:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e MCP_AUTH_TOKEN=secret-token \
+  -e PI_WEB_ENABLED=true \
+  -e PI_WEB_PASSWORD=long-random-password \
+  butter-box
+```
+
+Then open `http://127.0.0.1:8080/` and log in with username `pi` and the configured password. Do not expose it over plain HTTP to the internet — terminate TLS in front of it.
 
 ## MCP Server JSON Example
 

@@ -32,6 +32,11 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 	}))
 	mux.Handle(cfg.HTTPPath, WithBearerAuth(handler, cfg.Token))
 
+	if cfg.PiWeb.Enabled {
+		mux.Handle("/", NewPiWebHandler(cfg.PiWeb))
+		StartPiWebProcess(ctx, logger, cfg.PiWeb)
+	}
+
 	httpServer := &http.Server{
 		Addr:    cfg.Addr,
 		Handler: mux,
@@ -44,6 +49,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		slog.Bool("auth_enabled", cfg.Token != ""),
 		slog.Bool("stateless", cfg.Stateless),
 		slog.Bool("json_response", cfg.JSONResponse),
+		slog.Bool("pi_web_enabled", cfg.PiWeb.Enabled),
 	)
 
 	errCh := make(chan error, 1)
