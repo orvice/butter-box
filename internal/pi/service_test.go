@@ -1,10 +1,12 @@
 package pi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -143,19 +145,62 @@ func TestServiceEndToEnd(t *testing.T) {
 	}
 }
 
+// TestServiceBoxCatalogAndDirectories exercises the two session-less RPCs a
+// dashboard needs before any agent session exists.
+func TestServiceBoxCatalogAndDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"repo-a", "repo-b/sub", ".git"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client, ctx := newTestClient(t, Config{MaxSessions: 4, SandboxRoot: root})
+
+	// No session_id: the catalog comes from the box itself.
+	models, err := client.GetAvailableModels(ctx, connect.NewRequest(&piv1.GetAvailableModelsRequest{}))
+	if err != nil {
+		t.Fatalf("GetAvailableModels(session-less): %v", err)
+	}
+	if len(models.Msg.GetModels()) != 2 || models.Msg.GetModels()[0].GetId() != "fake-model" {
+		t.Fatalf("models = %+v", models.Msg.GetModels())
+	}
+
+	listed, err := client.ListDirectories(ctx, connect.NewRequest(&piv1.ListDirectoriesRequest{}))
+	if err != nil {
+		t.Fatalf("ListDirectories(root): %v", err)
+	}
+	dirs := listed.Msg.GetDirectories()
+	if len(dirs) != 2 || dirs[0].GetName() != "repo-a" || dirs[1].GetName() != "repo-b" {
+		t.Fatalf("directories = %+v, want repo-a and repo-b", dirs)
+	}
+	if listed.Msg.GetTruncated() {
+		t.Fatalf("listing truncated, want false")
+	}
+
+	// The returned path walks down one level and is usable as a session cwd.
+	listed, err = client.ListDirectories(ctx, connect.NewRequest(&piv1.ListDirectoriesRequest{
+		Path: dirs[1].GetPath(),
+	}))
+	if err != nil {
+		t.Fatalf("ListDirectories(repo-b): %v", err)
+	}
+	if len(listed.Msg.GetDirectories()) != 1 || listed.Msg.GetDirectories()[0].GetName() != "sub" {
+		t.Fatalf("repo-b listing = %+v, want [sub]", listed.Msg.GetDirectories())
+	}
+
+	hidden, err := client.ListDirectories(ctx, connect.NewRequest(&piv1.ListDirectoriesRequest{
+		IncludeHidden: true,
+	}))
+	if err != nil {
+		t.Fatalf("ListDirectories(include_hidden): %v", err)
+	}
+	if len(hidden.Msg.GetDirectories()) != 3 {
+		t.Fatalf("hidden listing = %+v, want 3", hidden.Msg.GetDirectories())
+	}
+}
+
 func TestServiceErrorCodes(t *testing.T) {
-	t.Setenv("FAKE_PI", "1")
-	manager := NewManager(testLogger(t), Config{Bin: os.Args[0], MaxSessions: 4})
-	t.Cleanup(manager.Stop)
-
-	path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
-	mux := http.NewServeMux()
-	mux.Handle(path, handler)
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	client := piv1connect.NewPiServiceClient(srv.Client(), srv.URL)
-	ctx := testCtx(t)
+	client, ctx := newTestClient(t, Config{MaxSessions: 4, SandboxRoot: t.TempDir()})
 
 	_, err := client.SendMessage(ctx, connect.NewRequest(&piv1.SendMessageRequest{
 		SessionId: "no-such-session",
@@ -165,4 +210,27 @@ func TestServiceErrorCodes(t *testing.T) {
 	if !errors.As(err, &connectErr) || connectErr.Code() != connect.CodeNotFound {
 		t.Fatalf("error = %v, want CodeNotFound", err)
 	}
+
+	// A directory escaping the sandbox root is an invalid argument, like cwd.
+	_, err = client.ListDirectories(ctx, connect.NewRequest(&piv1.ListDirectoriesRequest{
+		Path: "../escape",
+	}))
+	if !errors.As(err, &connectErr) || connectErr.Code() != connect.CodeInvalidArgument {
+		t.Fatalf("ListDirectories escape error = %v, want CodeInvalidArgument", err)
+	}
+}
+
+// newTestClient serves the pi service over HTTP against the fake pi and
+// returns a client for it.
+func newTestClient(t *testing.T, cfg Config) (piv1connect.PiServiceClient, context.Context) {
+	t.Helper()
+	manager := newFakeManagerCfg(t, cfg)
+
+	path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	return piv1connect.NewPiServiceClient(srv.Client(), srv.URL), testCtx(t)
 }

@@ -50,6 +50,9 @@ const (
 	// PiServiceGetAvailableModelsProcedure is the fully-qualified name of the PiService's
 	// GetAvailableModels RPC.
 	PiServiceGetAvailableModelsProcedure = "/butterbox.pi.v1.PiService/GetAvailableModels"
+	// PiServiceListDirectoriesProcedure is the fully-qualified name of the PiService's ListDirectories
+	// RPC.
+	PiServiceListDirectoriesProcedure = "/butterbox.pi.v1.PiService/ListDirectories"
 	// PiServiceAbortSessionProcedure is the fully-qualified name of the PiService's AbortSession RPC.
 	PiServiceAbortSessionProcedure = "/butterbox.pi.v1.PiService/AbortSession"
 	// PiServiceDeleteSessionProcedure is the fully-qualified name of the PiService's DeleteSession RPC.
@@ -81,10 +84,15 @@ type PiServiceClient interface {
 	// flight, optionally waiting for it to settle, and returns its result once
 	// the session entries past the cursor contain an assistant message.
 	GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error)
-	// GetAvailableModels reports the models the session's pi process can use
-	// (as configured by pi's providers/auth on this box), re-attaching the
-	// session if it is not currently active.
+	// GetAvailableModels reports the models pi can use on this box (as
+	// configured by pi's providers/auth). With session_id set it asks that
+	// session's process, re-attaching it if it is not currently active; with
+	// session_id empty it answers for the box itself, no session required.
 	GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error)
+	// ListDirectories lists the immediate subdirectories of one directory
+	// inside the box's sandbox root — enough for a working-directory picker to
+	// walk down one level per call. Read-only: no file contents, no recursion.
+	ListDirectories(context.Context, *connect.Request[v1.ListDirectoriesRequest]) (*connect.Response[v1.ListDirectoriesResponse], error)
 	// AbortSession aborts the in-flight run, if any.
 	AbortSession(context.Context, *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error)
 	// DeleteSession stops the session process. The session file on disk is
@@ -151,6 +159,12 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(piServiceMethods.ByName("GetAvailableModels")),
 			connect.WithClientOptions(opts...),
 		),
+		listDirectories: connect.NewClient[v1.ListDirectoriesRequest, v1.ListDirectoriesResponse](
+			httpClient,
+			baseURL+PiServiceListDirectoriesProcedure,
+			connect.WithSchema(piServiceMethods.ByName("ListDirectories")),
+			connect.WithClientOptions(opts...),
+		),
 		abortSession: connect.NewClient[v1.AbortSessionRequest, v1.AbortSessionResponse](
 			httpClient,
 			baseURL+PiServiceAbortSessionProcedure,
@@ -176,6 +190,7 @@ type piServiceClient struct {
 	submitMessage      *connect.Client[v1.SubmitMessageRequest, v1.SubmitMessageResponse]
 	getTurn            *connect.Client[v1.GetTurnRequest, v1.GetTurnResponse]
 	getAvailableModels *connect.Client[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse]
+	listDirectories    *connect.Client[v1.ListDirectoriesRequest, v1.ListDirectoriesResponse]
 	abortSession       *connect.Client[v1.AbortSessionRequest, v1.AbortSessionResponse]
 	deleteSession      *connect.Client[v1.DeleteSessionRequest, v1.DeleteSessionResponse]
 }
@@ -220,6 +235,11 @@ func (c *piServiceClient) GetAvailableModels(ctx context.Context, req *connect.R
 	return c.getAvailableModels.CallUnary(ctx, req)
 }
 
+// ListDirectories calls butterbox.pi.v1.PiService.ListDirectories.
+func (c *piServiceClient) ListDirectories(ctx context.Context, req *connect.Request[v1.ListDirectoriesRequest]) (*connect.Response[v1.ListDirectoriesResponse], error) {
+	return c.listDirectories.CallUnary(ctx, req)
+}
+
 // AbortSession calls butterbox.pi.v1.PiService.AbortSession.
 func (c *piServiceClient) AbortSession(ctx context.Context, req *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error) {
 	return c.abortSession.CallUnary(ctx, req)
@@ -255,10 +275,15 @@ type PiServiceHandler interface {
 	// flight, optionally waiting for it to settle, and returns its result once
 	// the session entries past the cursor contain an assistant message.
 	GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error)
-	// GetAvailableModels reports the models the session's pi process can use
-	// (as configured by pi's providers/auth on this box), re-attaching the
-	// session if it is not currently active.
+	// GetAvailableModels reports the models pi can use on this box (as
+	// configured by pi's providers/auth). With session_id set it asks that
+	// session's process, re-attaching it if it is not currently active; with
+	// session_id empty it answers for the box itself, no session required.
 	GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error)
+	// ListDirectories lists the immediate subdirectories of one directory
+	// inside the box's sandbox root — enough for a working-directory picker to
+	// walk down one level per call. Read-only: no file contents, no recursion.
+	ListDirectories(context.Context, *connect.Request[v1.ListDirectoriesRequest]) (*connect.Response[v1.ListDirectoriesResponse], error)
 	// AbortSession aborts the in-flight run, if any.
 	AbortSession(context.Context, *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error)
 	// DeleteSession stops the session process. The session file on disk is
@@ -321,6 +346,12 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(piServiceMethods.ByName("GetAvailableModels")),
 		connect.WithHandlerOptions(opts...),
 	)
+	piServiceListDirectoriesHandler := connect.NewUnaryHandler(
+		PiServiceListDirectoriesProcedure,
+		svc.ListDirectories,
+		connect.WithSchema(piServiceMethods.ByName("ListDirectories")),
+		connect.WithHandlerOptions(opts...),
+	)
 	piServiceAbortSessionHandler := connect.NewUnaryHandler(
 		PiServiceAbortSessionProcedure,
 		svc.AbortSession,
@@ -351,6 +382,8 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 			piServiceGetTurnHandler.ServeHTTP(w, r)
 		case PiServiceGetAvailableModelsProcedure:
 			piServiceGetAvailableModelsHandler.ServeHTTP(w, r)
+		case PiServiceListDirectoriesProcedure:
+			piServiceListDirectoriesHandler.ServeHTTP(w, r)
 		case PiServiceAbortSessionProcedure:
 			piServiceAbortSessionHandler.ServeHTTP(w, r)
 		case PiServiceDeleteSessionProcedure:
@@ -394,6 +427,10 @@ func (UnimplementedPiServiceHandler) GetTurn(context.Context, *connect.Request[v
 
 func (UnimplementedPiServiceHandler) GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.GetAvailableModels is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) ListDirectories(context.Context, *connect.Request[v1.ListDirectoriesRequest]) (*connect.Response[v1.ListDirectoriesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.ListDirectories is not implemented"))
 }
 
 func (UnimplementedPiServiceHandler) AbortSession(context.Context, *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error) {

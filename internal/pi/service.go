@@ -134,6 +134,24 @@ func (s *Service) GetAvailableModels(ctx context.Context, req *connect.Request[p
 	return connect.NewResponse(resp), nil
 }
 
+func (s *Service) ListDirectories(_ context.Context, req *connect.Request[piv1.ListDirectoriesRequest]) (*connect.Response[piv1.ListDirectoriesResponse], error) {
+	listing, err := s.manager.ListDirectories(req.Msg.GetPath(), req.Msg.GetIncludeHidden())
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	resp := &piv1.ListDirectoriesResponse{
+		Path:      listing.Path,
+		Truncated: listing.Truncated,
+	}
+	for _, dir := range listing.Directories {
+		resp.Directories = append(resp.Directories, &piv1.Directory{
+			Name: dir.Name,
+			Path: dir.Path,
+		})
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Service) AbortSession(ctx context.Context, req *connect.Request[piv1.AbortSessionRequest]) (*connect.Response[piv1.AbortSessionResponse], error) {
 	if err := s.manager.Abort(ctx, req.Msg.GetSessionId()); err != nil {
 		return nil, rpcError(err)
@@ -156,7 +174,7 @@ func rpcError(err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, ErrTooManySessions):
 		return connect.NewError(connect.CodeResourceExhausted, err)
-	case errors.Is(err, ErrBadCursor), errors.Is(err, ErrInvalidCwd):
+	case errors.Is(err, ErrBadCursor), errors.Is(err, ErrInvalidCwd), errors.Is(err, ErrInvalidPath):
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, context.Canceled):
 		return connect.NewError(connect.CodeCanceled, err)
