@@ -43,6 +43,10 @@ const (
 	PiServiceSendMessageProcedure = "/butterbox.pi.v1.PiService/SendMessage"
 	// PiServiceStreamMessageProcedure is the fully-qualified name of the PiService's StreamMessage RPC.
 	PiServiceStreamMessageProcedure = "/butterbox.pi.v1.PiService/StreamMessage"
+	// PiServiceSubmitMessageProcedure is the fully-qualified name of the PiService's SubmitMessage RPC.
+	PiServiceSubmitMessageProcedure = "/butterbox.pi.v1.PiService/SubmitMessage"
+	// PiServiceGetTurnProcedure is the fully-qualified name of the PiService's GetTurn RPC.
+	PiServiceGetTurnProcedure = "/butterbox.pi.v1.PiService/GetTurn"
 	// PiServiceGetAvailableModelsProcedure is the fully-qualified name of the PiService's
 	// GetAvailableModels RPC.
 	PiServiceGetAvailableModelsProcedure = "/butterbox.pi.v1.PiService/GetAvailableModels"
@@ -68,6 +72,15 @@ type PiServiceClient interface {
 	// StreamMessage sends one prompt and streams raw pi events until the run
 	// settles. The final message has type "agent_settled".
 	StreamMessage(context.Context, *connect.Request[v1.StreamMessageRequest]) (*connect.ServerStreamForClient[v1.StreamMessageResponse], error)
+	// SubmitMessage accepts one prompt and returns immediately with a turn
+	// cursor. The run is detached from the request lifetime: a dropped
+	// connection never aborts it. Poll or long-poll the run with GetTurn;
+	// AbortSession is the only way to cancel it.
+	SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error)
+	// GetTurn reports whether the run submitted at turn_cursor is still in
+	// flight, optionally waiting for it to settle, and returns its result once
+	// the session entries past the cursor contain an assistant message.
+	GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error)
 	// GetAvailableModels reports the models the session's pi process can use
 	// (as configured by pi's providers/auth on this box), re-attaching the
 	// session if it is not currently active.
@@ -120,6 +133,18 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(piServiceMethods.ByName("StreamMessage")),
 			connect.WithClientOptions(opts...),
 		),
+		submitMessage: connect.NewClient[v1.SubmitMessageRequest, v1.SubmitMessageResponse](
+			httpClient,
+			baseURL+PiServiceSubmitMessageProcedure,
+			connect.WithSchema(piServiceMethods.ByName("SubmitMessage")),
+			connect.WithClientOptions(opts...),
+		),
+		getTurn: connect.NewClient[v1.GetTurnRequest, v1.GetTurnResponse](
+			httpClient,
+			baseURL+PiServiceGetTurnProcedure,
+			connect.WithSchema(piServiceMethods.ByName("GetTurn")),
+			connect.WithClientOptions(opts...),
+		),
 		getAvailableModels: connect.NewClient[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse](
 			httpClient,
 			baseURL+PiServiceGetAvailableModelsProcedure,
@@ -148,6 +173,8 @@ type piServiceClient struct {
 	getSession         *connect.Client[v1.GetSessionRequest, v1.GetSessionResponse]
 	sendMessage        *connect.Client[v1.SendMessageRequest, v1.SendMessageResponse]
 	streamMessage      *connect.Client[v1.StreamMessageRequest, v1.StreamMessageResponse]
+	submitMessage      *connect.Client[v1.SubmitMessageRequest, v1.SubmitMessageResponse]
+	getTurn            *connect.Client[v1.GetTurnRequest, v1.GetTurnResponse]
 	getAvailableModels *connect.Client[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse]
 	abortSession       *connect.Client[v1.AbortSessionRequest, v1.AbortSessionResponse]
 	deleteSession      *connect.Client[v1.DeleteSessionRequest, v1.DeleteSessionResponse]
@@ -176,6 +203,16 @@ func (c *piServiceClient) SendMessage(ctx context.Context, req *connect.Request[
 // StreamMessage calls butterbox.pi.v1.PiService.StreamMessage.
 func (c *piServiceClient) StreamMessage(ctx context.Context, req *connect.Request[v1.StreamMessageRequest]) (*connect.ServerStreamForClient[v1.StreamMessageResponse], error) {
 	return c.streamMessage.CallServerStream(ctx, req)
+}
+
+// SubmitMessage calls butterbox.pi.v1.PiService.SubmitMessage.
+func (c *piServiceClient) SubmitMessage(ctx context.Context, req *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error) {
+	return c.submitMessage.CallUnary(ctx, req)
+}
+
+// GetTurn calls butterbox.pi.v1.PiService.GetTurn.
+func (c *piServiceClient) GetTurn(ctx context.Context, req *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error) {
+	return c.getTurn.CallUnary(ctx, req)
 }
 
 // GetAvailableModels calls butterbox.pi.v1.PiService.GetAvailableModels.
@@ -209,6 +246,15 @@ type PiServiceHandler interface {
 	// StreamMessage sends one prompt and streams raw pi events until the run
 	// settles. The final message has type "agent_settled".
 	StreamMessage(context.Context, *connect.Request[v1.StreamMessageRequest], *connect.ServerStream[v1.StreamMessageResponse]) error
+	// SubmitMessage accepts one prompt and returns immediately with a turn
+	// cursor. The run is detached from the request lifetime: a dropped
+	// connection never aborts it. Poll or long-poll the run with GetTurn;
+	// AbortSession is the only way to cancel it.
+	SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error)
+	// GetTurn reports whether the run submitted at turn_cursor is still in
+	// flight, optionally waiting for it to settle, and returns its result once
+	// the session entries past the cursor contain an assistant message.
+	GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error)
 	// GetAvailableModels reports the models the session's pi process can use
 	// (as configured by pi's providers/auth on this box), re-attaching the
 	// session if it is not currently active.
@@ -257,6 +303,18 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(piServiceMethods.ByName("StreamMessage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	piServiceSubmitMessageHandler := connect.NewUnaryHandler(
+		PiServiceSubmitMessageProcedure,
+		svc.SubmitMessage,
+		connect.WithSchema(piServiceMethods.ByName("SubmitMessage")),
+		connect.WithHandlerOptions(opts...),
+	)
+	piServiceGetTurnHandler := connect.NewUnaryHandler(
+		PiServiceGetTurnProcedure,
+		svc.GetTurn,
+		connect.WithSchema(piServiceMethods.ByName("GetTurn")),
+		connect.WithHandlerOptions(opts...),
+	)
 	piServiceGetAvailableModelsHandler := connect.NewUnaryHandler(
 		PiServiceGetAvailableModelsProcedure,
 		svc.GetAvailableModels,
@@ -287,6 +345,10 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 			piServiceSendMessageHandler.ServeHTTP(w, r)
 		case PiServiceStreamMessageProcedure:
 			piServiceStreamMessageHandler.ServeHTTP(w, r)
+		case PiServiceSubmitMessageProcedure:
+			piServiceSubmitMessageHandler.ServeHTTP(w, r)
+		case PiServiceGetTurnProcedure:
+			piServiceGetTurnHandler.ServeHTTP(w, r)
 		case PiServiceGetAvailableModelsProcedure:
 			piServiceGetAvailableModelsHandler.ServeHTTP(w, r)
 		case PiServiceAbortSessionProcedure:
@@ -320,6 +382,14 @@ func (UnimplementedPiServiceHandler) SendMessage(context.Context, *connect.Reque
 
 func (UnimplementedPiServiceHandler) StreamMessage(context.Context, *connect.Request[v1.StreamMessageRequest], *connect.ServerStream[v1.StreamMessageResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.StreamMessage is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.SubmitMessage is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.GetTurn is not implemented"))
 }
 
 func (UnimplementedPiServiceHandler) GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error) {

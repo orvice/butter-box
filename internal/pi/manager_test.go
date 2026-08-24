@@ -194,6 +194,132 @@ func TestReattachKnownSession(t *testing.T) {
 	}
 }
 
+func TestSubmitAndGetTurn(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// First turn: an empty session has no leaf entry yet.
+	cursor, err := m.Submit(ctx, info.ID, "slow async run", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if cursor != "" {
+		t.Fatalf("cursor = %q, want empty for a fresh session", cursor)
+	}
+
+	// The run is in flight (the fake's "slow" prompt takes 2s): a pure poll
+	// reports running, a second submit is rejected as busy.
+	status, err := m.Turn(ctx, info.ID, cursor, 0)
+	if err != nil {
+		t.Fatalf("Turn poll: %v", err)
+	}
+	if !status.Running || status.Result != nil {
+		t.Fatalf("status mid-run = %+v, want running without result", status)
+	}
+	if _, err := m.Submit(ctx, info.ID, "second", nil); !errors.Is(err, ErrBusy) {
+		t.Fatalf("Submit while running = %v, want ErrBusy", err)
+	}
+
+	// Long-poll until it settles.
+	status, err = m.Turn(ctx, info.ID, cursor, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Turn long-poll: %v", err)
+	}
+	if status.Running || status.Result == nil {
+		t.Fatalf("status after settle = %+v, want result", status)
+	}
+	if status.Result.Text != "echo: slow async run" {
+		t.Fatalf("text = %q", status.Result.Text)
+	}
+	if status.Result.StopReason != "stop" {
+		t.Fatalf("stop reason = %q", status.Result.StopReason)
+	}
+	if status.Result.Stats.Input != 100 {
+		t.Fatalf("stats = %+v", status.Result.Stats)
+	}
+
+	// Second turn: the cursor now points at the first turn's assistant entry,
+	// and the result must be scoped to entries after it.
+	cursor2, err := m.Submit(ctx, info.ID, "quick two", nil)
+	if err != nil {
+		t.Fatalf("Submit second: %v", err)
+	}
+	if cursor2 == "" || cursor2 == cursor {
+		t.Fatalf("cursor2 = %q, want a fresh leaf id", cursor2)
+	}
+	status, err = m.Turn(ctx, info.ID, cursor2, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Turn second: %v", err)
+	}
+	if status.Running || status.Result == nil || status.Result.Text != "echo: quick two" {
+		t.Fatalf("second turn status = %+v", status)
+	}
+}
+
+func TestGetTurnDidNotFinish(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// No run ever produced an assistant message after this cursor: not
+	// running, no result — the honest "did not finish" shape.
+	status, err := m.Turn(ctx, info.ID, "", 0)
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if status.Running || status.Result != nil {
+		t.Fatalf("status = %+v, want neither running nor result", status)
+	}
+}
+
+func TestGetTurnAfterAbort(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	cursor, err := m.Submit(ctx, info.ID, "slow doomed run", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := m.Abort(ctx, info.ID); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
+
+	// The aborted run settles without an assistant message: did not finish.
+	status, err := m.Turn(ctx, info.ID, cursor, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Turn: %v", err)
+	}
+	if status.Running || status.Result != nil {
+		t.Fatalf("status after abort = %+v, want neither running nor result", status)
+	}
+}
+
+func TestGetTurnBadCursor(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := m.Turn(ctx, info.ID, "no-such-entry", 0); !errors.Is(err, ErrBadCursor) {
+		t.Fatalf("Turn bad cursor = %v, want ErrBadCursor", err)
+	}
+}
+
 func TestAvailableModels(t *testing.T) {
 	m := newFakeManager(t)
 	ctx := testCtx(t)

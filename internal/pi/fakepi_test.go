@@ -31,6 +31,47 @@ type fakePi struct {
 	lastPrompt string
 	uiResp     chan map[string]any
 	abortCh    chan struct{}
+
+	entriesMu sync.Mutex
+	entries   []map[string]any
+	nextEntry int
+}
+
+// appendEntry records one session entry, mimicking pi's entry log.
+func (f *fakePi) appendEntry(entry map[string]any) {
+	f.entriesMu.Lock()
+	defer f.entriesMu.Unlock()
+	f.nextEntry++
+	entry["id"] = fmt.Sprintf("entry-%04d", f.nextEntry)
+	f.entries = append(f.entries, entry)
+}
+
+// entriesSince returns entries after the given id (all when since is nil),
+// the current leaf id, and whether since was found.
+func (f *fakePi) entriesSince(since any) ([]map[string]any, any, bool) {
+	f.entriesMu.Lock()
+	defer f.entriesMu.Unlock()
+	var leaf any
+	if n := len(f.entries); n > 0 {
+		leaf = f.entries[n-1]["id"]
+	}
+	start := 0
+	if since != nil {
+		found := false
+		for i, e := range f.entries {
+			if e["id"] == since {
+				start = i + 1
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, leaf, false
+		}
+	}
+	out := make([]map[string]any, len(f.entries)-start)
+	copy(out, f.entries[start:])
+	return out, leaf, true
 }
 
 func fakePiMain() {
@@ -103,6 +144,19 @@ func (f *fakePi) handle(cmd map[string]any) {
 		f.respond(cmd, nil)
 	case "get_last_assistant_text":
 		f.respond(cmd, map[string]any{"text": "echo: " + f.lastPrompt})
+	case "get_entries":
+		entries, leaf, ok := f.entriesSince(cmd["since"])
+		if !ok {
+			f.emit(map[string]any{
+				"type":    "response",
+				"id":      cmd["id"],
+				"command": "get_entries",
+				"success": false,
+				"error":   fmt.Sprintf("Entry not found: %v", cmd["since"]),
+			})
+			return
+		}
+		f.respond(cmd, map[string]any{"entries": entries, "leafId": leaf})
 	case "get_available_models":
 		f.respond(cmd, map[string]any{
 			"models": []map[string]any{
@@ -162,6 +216,13 @@ func (f *fakePi) handle(cmd map[string]any) {
 // run emits one agent run's event stream.
 func (f *fakePi) run(prompt string) {
 	f.emit(map[string]any{"type": "agent_start"})
+	f.appendEntry(map[string]any{
+		"type": "message",
+		"message": map[string]any{
+			"role":    "user",
+			"content": []map[string]any{{"type": "text", "text": prompt}},
+		},
+	})
 
 	if strings.Contains(prompt, "dialog") {
 		// Block on an extension UI confirm; the client must answer or the
@@ -188,6 +249,17 @@ func (f *fakePi) run(prompt string) {
 		}
 	}
 
+	f.appendEntry(map[string]any{
+		"type": "message",
+		"message": map[string]any{
+			"role":       "assistant",
+			"stopReason": "stop",
+			"content": []map[string]any{
+				{"type": "thinking", "thinking": "hmm"},
+				{"type": "text", "text": "echo: " + prompt},
+			},
+		},
+	})
 	f.emit(map[string]any{"type": "message_start", "message": map[string]any{"role": "assistant"}})
 	f.emit(map[string]any{
 		"type":                  "message_update",

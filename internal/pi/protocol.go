@@ -77,6 +77,27 @@ type modelData struct {
 	} `json:"cost"`
 }
 
+// entryData mirrors the fields of one session entry in get_entries' response
+// data we consume.
+type entryData struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Message struct {
+		Role       string `json:"role"`
+		StopReason string `json:"stopReason"`
+		Content    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+// entriesData mirrors get_entries' response data.
+type entriesData struct {
+	Entries []entryData `json:"entries"`
+	LeafID  *string     `json:"leafId"`
+}
+
 // assistantEnd extracts the stop reason from a message_end event when the
 // completed message is an assistant message.
 type assistantEnd struct {

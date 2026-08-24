@@ -551,6 +551,296 @@ func (x *StreamMessageResponse) GetPayloadJson() string {
 	return ""
 }
 
+type SubmitMessageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Images        []*ImageContent        `protobuf:"bytes,3,rep,name=images,proto3" json:"images,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitMessageRequest) Reset() {
+	*x = SubmitMessageRequest{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitMessageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitMessageRequest) ProtoMessage() {}
+
+func (x *SubmitMessageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitMessageRequest.ProtoReflect.Descriptor instead.
+func (*SubmitMessageRequest) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SubmitMessageRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SubmitMessageRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *SubmitMessageRequest) GetImages() []*ImageContent {
+	if x != nil {
+		return x.Images
+	}
+	return nil
+}
+
+type SubmitMessageResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// pi's entries cursor at submit time: the session's leaf entry id, "" for
+	// a session with no entries yet. Stable across process restarts — pass it
+	// to GetTurn to await or recover this turn's result.
+	TurnCursor    string `protobuf:"bytes,1,opt,name=turn_cursor,json=turnCursor,proto3" json:"turn_cursor,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitMessageResponse) Reset() {
+	*x = SubmitMessageResponse{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitMessageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitMessageResponse) ProtoMessage() {}
+
+func (x *SubmitMessageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitMessageResponse.ProtoReflect.Descriptor instead.
+func (*SubmitMessageResponse) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SubmitMessageResponse) GetTurnCursor() string {
+	if x != nil {
+		return x.TurnCursor
+	}
+	return ""
+}
+
+type GetTurnRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Cursor returned by SubmitMessage.
+	TurnCursor string `protobuf:"bytes,2,opt,name=turn_cursor,json=turnCursor,proto3" json:"turn_cursor,omitempty"`
+	// 0 answers immediately (pure poll); >0 waits up to this many seconds
+	// (capped at 30) for the run to settle before answering.
+	WaitSeconds   int32 `protobuf:"varint,3,opt,name=wait_seconds,json=waitSeconds,proto3" json:"wait_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTurnRequest) Reset() {
+	*x = GetTurnRequest{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTurnRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTurnRequest) ProtoMessage() {}
+
+func (x *GetTurnRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTurnRequest.ProtoReflect.Descriptor instead.
+func (*GetTurnRequest) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetTurnRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *GetTurnRequest) GetTurnCursor() string {
+	if x != nil {
+		return x.TurnCursor
+	}
+	return ""
+}
+
+func (x *GetTurnRequest) GetWaitSeconds() int32 {
+	if x != nil {
+		return x.WaitSeconds
+	}
+	return 0
+}
+
+type GetTurnResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True while a run is still in flight on the session.
+	Running bool `protobuf:"varint,1,opt,name=running,proto3" json:"running,omitempty"`
+	// Set when entries past turn_cursor contain an assistant message. Unset
+	// with running=false means the turn did not finish (e.g. the process was
+	// restarted mid-run or the turn was aborted before any assistant reply).
+	Result        *TurnResult `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTurnResponse) Reset() {
+	*x = GetTurnResponse{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTurnResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTurnResponse) ProtoMessage() {}
+
+func (x *GetTurnResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTurnResponse.ProtoReflect.Descriptor instead.
+func (*GetTurnResponse) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetTurnResponse) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+func (x *GetTurnResponse) GetResult() *TurnResult {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+type TurnResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Text of the last assistant message produced after the turn cursor.
+	Text string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Stop reason of that assistant message: stop, length, toolUse, error,
+	// aborted.
+	StopReason string `protobuf:"bytes,2,opt,name=stop_reason,json=stopReason,proto3" json:"stop_reason,omitempty"`
+	// Cumulative session statistics.
+	Stats         *SessionStats `protobuf:"bytes,3,opt,name=stats,proto3" json:"stats,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TurnResult) Reset() {
+	*x = TurnResult{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TurnResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TurnResult) ProtoMessage() {}
+
+func (x *TurnResult) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TurnResult.ProtoReflect.Descriptor instead.
+func (*TurnResult) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TurnResult) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *TurnResult) GetStopReason() string {
+	if x != nil {
+		return x.StopReason
+	}
+	return ""
+}
+
+func (x *TurnResult) GetStats() *SessionStats {
+	if x != nil {
+		return x.Stats
+	}
+	return nil
+}
+
 type GetAvailableModelsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -560,7 +850,7 @@ type GetAvailableModelsRequest struct {
 
 func (x *GetAvailableModelsRequest) Reset() {
 	*x = GetAvailableModelsRequest{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -572,7 +862,7 @@ func (x *GetAvailableModelsRequest) String() string {
 func (*GetAvailableModelsRequest) ProtoMessage() {}
 
 func (x *GetAvailableModelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -585,7 +875,7 @@ func (x *GetAvailableModelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAvailableModelsRequest.ProtoReflect.Descriptor instead.
 func (*GetAvailableModelsRequest) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{10}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetAvailableModelsRequest) GetSessionId() string {
@@ -604,7 +894,7 @@ type GetAvailableModelsResponse struct {
 
 func (x *GetAvailableModelsResponse) Reset() {
 	*x = GetAvailableModelsResponse{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +906,7 @@ func (x *GetAvailableModelsResponse) String() string {
 func (*GetAvailableModelsResponse) ProtoMessage() {}
 
 func (x *GetAvailableModelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +919,7 @@ func (x *GetAvailableModelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAvailableModelsResponse.ProtoReflect.Descriptor instead.
 func (*GetAvailableModelsResponse) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{11}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetAvailableModelsResponse) GetModels() []*Model {
@@ -665,7 +955,7 @@ type Model struct {
 
 func (x *Model) Reset() {
 	*x = Model{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +967,7 @@ func (x *Model) String() string {
 func (*Model) ProtoMessage() {}
 
 func (x *Model) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +980,7 @@ func (x *Model) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Model.ProtoReflect.Descriptor instead.
 func (*Model) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{12}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Model) GetId() string {
@@ -768,7 +1058,7 @@ type ModelCost struct {
 
 func (x *ModelCost) Reset() {
 	*x = ModelCost{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -780,7 +1070,7 @@ func (x *ModelCost) String() string {
 func (*ModelCost) ProtoMessage() {}
 
 func (x *ModelCost) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -793,7 +1083,7 @@ func (x *ModelCost) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelCost.ProtoReflect.Descriptor instead.
 func (*ModelCost) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{13}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ModelCost) GetInput() float64 {
@@ -833,7 +1123,7 @@ type AbortSessionRequest struct {
 
 func (x *AbortSessionRequest) Reset() {
 	*x = AbortSessionRequest{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -845,7 +1135,7 @@ func (x *AbortSessionRequest) String() string {
 func (*AbortSessionRequest) ProtoMessage() {}
 
 func (x *AbortSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -858,7 +1148,7 @@ func (x *AbortSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbortSessionRequest.ProtoReflect.Descriptor instead.
 func (*AbortSessionRequest) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{14}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *AbortSessionRequest) GetSessionId() string {
@@ -876,7 +1166,7 @@ type AbortSessionResponse struct {
 
 func (x *AbortSessionResponse) Reset() {
 	*x = AbortSessionResponse{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -888,7 +1178,7 @@ func (x *AbortSessionResponse) String() string {
 func (*AbortSessionResponse) ProtoMessage() {}
 
 func (x *AbortSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -901,7 +1191,7 @@ func (x *AbortSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbortSessionResponse.ProtoReflect.Descriptor instead.
 func (*AbortSessionResponse) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{15}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{20}
 }
 
 type DeleteSessionRequest struct {
@@ -915,7 +1205,7 @@ type DeleteSessionRequest struct {
 
 func (x *DeleteSessionRequest) Reset() {
 	*x = DeleteSessionRequest{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -927,7 +1217,7 @@ func (x *DeleteSessionRequest) String() string {
 func (*DeleteSessionRequest) ProtoMessage() {}
 
 func (x *DeleteSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -940,7 +1230,7 @@ func (x *DeleteSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSessionRequest.ProtoReflect.Descriptor instead.
 func (*DeleteSessionRequest) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{16}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *DeleteSessionRequest) GetSessionId() string {
@@ -965,7 +1255,7 @@ type DeleteSessionResponse struct {
 
 func (x *DeleteSessionResponse) Reset() {
 	*x = DeleteSessionResponse{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[17]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -977,7 +1267,7 @@ func (x *DeleteSessionResponse) String() string {
 func (*DeleteSessionResponse) ProtoMessage() {}
 
 func (x *DeleteSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[17]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -990,7 +1280,7 @@ func (x *DeleteSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSessionResponse.ProtoReflect.Descriptor instead.
 func (*DeleteSessionResponse) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{17}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{22}
 }
 
 type Session struct {
@@ -1012,7 +1302,7 @@ type Session struct {
 
 func (x *Session) Reset() {
 	*x = Session{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[18]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1024,7 +1314,7 @@ func (x *Session) String() string {
 func (*Session) ProtoMessage() {}
 
 func (x *Session) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[18]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1037,7 +1327,7 @@ func (x *Session) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Session.ProtoReflect.Descriptor instead.
 func (*Session) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{18}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Session) GetId() string {
@@ -1098,7 +1388,7 @@ type SessionStats struct {
 
 func (x *SessionStats) Reset() {
 	*x = SessionStats{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[19]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1110,7 +1400,7 @@ func (x *SessionStats) String() string {
 func (*SessionStats) ProtoMessage() {}
 
 func (x *SessionStats) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[19]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1123,7 +1413,7 @@ func (x *SessionStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStats.ProtoReflect.Descriptor instead.
 func (*SessionStats) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{19}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SessionStats) GetInputTokens() int64 {
@@ -1180,7 +1470,7 @@ type ImageContent struct {
 
 func (x *ImageContent) Reset() {
 	*x = ImageContent{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[20]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1192,7 +1482,7 @@ func (x *ImageContent) String() string {
 func (*ImageContent) ProtoMessage() {}
 
 func (x *ImageContent) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[20]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1205,7 +1495,7 @@ func (x *ImageContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageContent.ProtoReflect.Descriptor instead.
 func (*ImageContent) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{20}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ImageContent) GetMimeType() string {
@@ -1260,7 +1550,30 @@ const file_butterbox_pi_v1_pi_proto_rawDesc = "" +
 	"\x06images\x18\x03 \x03(\v2\x1d.butterbox.pi.v1.ImageContentR\x06images\"N\n" +
 	"\x15StreamMessageResponse\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
-	"\fpayload_json\x18\x02 \x01(\tR\vpayloadJson\":\n" +
+	"\fpayload_json\x18\x02 \x01(\tR\vpayloadJson\"\x86\x01\n" +
+	"\x14SubmitMessageRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x125\n" +
+	"\x06images\x18\x03 \x03(\v2\x1d.butterbox.pi.v1.ImageContentR\x06images\"8\n" +
+	"\x15SubmitMessageResponse\x12\x1f\n" +
+	"\vturn_cursor\x18\x01 \x01(\tR\n" +
+	"turnCursor\"s\n" +
+	"\x0eGetTurnRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
+	"\vturn_cursor\x18\x02 \x01(\tR\n" +
+	"turnCursor\x12!\n" +
+	"\fwait_seconds\x18\x03 \x01(\x05R\vwaitSeconds\"`\n" +
+	"\x0fGetTurnResponse\x12\x18\n" +
+	"\arunning\x18\x01 \x01(\bR\arunning\x123\n" +
+	"\x06result\x18\x02 \x01(\v2\x1b.butterbox.pi.v1.TurnResultR\x06result\"v\n" +
+	"\n" +
+	"TurnResult\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1f\n" +
+	"\vstop_reason\x18\x02 \x01(\tR\n" +
+	"stopReason\x123\n" +
+	"\x05stats\x18\x03 \x01(\v2\x1d.butterbox.pi.v1.SessionStatsR\x05stats\":\n" +
 	"\x19GetAvailableModelsRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"L\n" +
@@ -1309,14 +1622,16 @@ const file_butterbox_pi_v1_pi_proto_rawDesc = "" +
 	"\x0fcontext_percent\x18\x06 \x01(\x05R\x0econtextPercent\"?\n" +
 	"\fImageContent\x12\x1b\n" +
 	"\tmime_type\x18\x01 \x01(\tR\bmimeType\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data2\x87\x06\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data2\xb5\a\n" +
 	"\tPiService\x12^\n" +
 	"\rCreateSession\x12%.butterbox.pi.v1.CreateSessionRequest\x1a&.butterbox.pi.v1.CreateSessionResponse\x12[\n" +
 	"\fListSessions\x12$.butterbox.pi.v1.ListSessionsRequest\x1a%.butterbox.pi.v1.ListSessionsResponse\x12U\n" +
 	"\n" +
 	"GetSession\x12\".butterbox.pi.v1.GetSessionRequest\x1a#.butterbox.pi.v1.GetSessionResponse\x12X\n" +
 	"\vSendMessage\x12#.butterbox.pi.v1.SendMessageRequest\x1a$.butterbox.pi.v1.SendMessageResponse\x12`\n" +
-	"\rStreamMessage\x12%.butterbox.pi.v1.StreamMessageRequest\x1a&.butterbox.pi.v1.StreamMessageResponse0\x01\x12m\n" +
+	"\rStreamMessage\x12%.butterbox.pi.v1.StreamMessageRequest\x1a&.butterbox.pi.v1.StreamMessageResponse0\x01\x12^\n" +
+	"\rSubmitMessage\x12%.butterbox.pi.v1.SubmitMessageRequest\x1a&.butterbox.pi.v1.SubmitMessageResponse\x12L\n" +
+	"\aGetTurn\x12\x1f.butterbox.pi.v1.GetTurnRequest\x1a .butterbox.pi.v1.GetTurnResponse\x12m\n" +
 	"\x12GetAvailableModels\x12*.butterbox.pi.v1.GetAvailableModelsRequest\x1a+.butterbox.pi.v1.GetAvailableModelsResponse\x12[\n" +
 	"\fAbortSession\x12$.butterbox.pi.v1.AbortSessionRequest\x1a%.butterbox.pi.v1.AbortSessionResponse\x12^\n" +
 	"\rDeleteSession\x12%.butterbox.pi.v1.DeleteSessionRequest\x1a&.butterbox.pi.v1.DeleteSessionResponseB=Z;github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1;piv1b\x06proto3"
@@ -1333,7 +1648,7 @@ func file_butterbox_pi_v1_pi_proto_rawDescGZIP() []byte {
 	return file_butterbox_pi_v1_pi_proto_rawDescData
 }
 
-var file_butterbox_pi_v1_pi_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_butterbox_pi_v1_pi_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_butterbox_pi_v1_pi_proto_goTypes = []any{
 	(*CreateSessionRequest)(nil),       // 0: butterbox.pi.v1.CreateSessionRequest
 	(*CreateSessionResponse)(nil),      // 1: butterbox.pi.v1.CreateSessionResponse
@@ -1345,49 +1660,61 @@ var file_butterbox_pi_v1_pi_proto_goTypes = []any{
 	(*SendMessageResponse)(nil),        // 7: butterbox.pi.v1.SendMessageResponse
 	(*StreamMessageRequest)(nil),       // 8: butterbox.pi.v1.StreamMessageRequest
 	(*StreamMessageResponse)(nil),      // 9: butterbox.pi.v1.StreamMessageResponse
-	(*GetAvailableModelsRequest)(nil),  // 10: butterbox.pi.v1.GetAvailableModelsRequest
-	(*GetAvailableModelsResponse)(nil), // 11: butterbox.pi.v1.GetAvailableModelsResponse
-	(*Model)(nil),                      // 12: butterbox.pi.v1.Model
-	(*ModelCost)(nil),                  // 13: butterbox.pi.v1.ModelCost
-	(*AbortSessionRequest)(nil),        // 14: butterbox.pi.v1.AbortSessionRequest
-	(*AbortSessionResponse)(nil),       // 15: butterbox.pi.v1.AbortSessionResponse
-	(*DeleteSessionRequest)(nil),       // 16: butterbox.pi.v1.DeleteSessionRequest
-	(*DeleteSessionResponse)(nil),      // 17: butterbox.pi.v1.DeleteSessionResponse
-	(*Session)(nil),                    // 18: butterbox.pi.v1.Session
-	(*SessionStats)(nil),               // 19: butterbox.pi.v1.SessionStats
-	(*ImageContent)(nil),               // 20: butterbox.pi.v1.ImageContent
+	(*SubmitMessageRequest)(nil),       // 10: butterbox.pi.v1.SubmitMessageRequest
+	(*SubmitMessageResponse)(nil),      // 11: butterbox.pi.v1.SubmitMessageResponse
+	(*GetTurnRequest)(nil),             // 12: butterbox.pi.v1.GetTurnRequest
+	(*GetTurnResponse)(nil),            // 13: butterbox.pi.v1.GetTurnResponse
+	(*TurnResult)(nil),                 // 14: butterbox.pi.v1.TurnResult
+	(*GetAvailableModelsRequest)(nil),  // 15: butterbox.pi.v1.GetAvailableModelsRequest
+	(*GetAvailableModelsResponse)(nil), // 16: butterbox.pi.v1.GetAvailableModelsResponse
+	(*Model)(nil),                      // 17: butterbox.pi.v1.Model
+	(*ModelCost)(nil),                  // 18: butterbox.pi.v1.ModelCost
+	(*AbortSessionRequest)(nil),        // 19: butterbox.pi.v1.AbortSessionRequest
+	(*AbortSessionResponse)(nil),       // 20: butterbox.pi.v1.AbortSessionResponse
+	(*DeleteSessionRequest)(nil),       // 21: butterbox.pi.v1.DeleteSessionRequest
+	(*DeleteSessionResponse)(nil),      // 22: butterbox.pi.v1.DeleteSessionResponse
+	(*Session)(nil),                    // 23: butterbox.pi.v1.Session
+	(*SessionStats)(nil),               // 24: butterbox.pi.v1.SessionStats
+	(*ImageContent)(nil),               // 25: butterbox.pi.v1.ImageContent
 }
 var file_butterbox_pi_v1_pi_proto_depIdxs = []int32{
-	18, // 0: butterbox.pi.v1.CreateSessionResponse.session:type_name -> butterbox.pi.v1.Session
-	18, // 1: butterbox.pi.v1.ListSessionsResponse.sessions:type_name -> butterbox.pi.v1.Session
-	18, // 2: butterbox.pi.v1.GetSessionResponse.session:type_name -> butterbox.pi.v1.Session
-	19, // 3: butterbox.pi.v1.GetSessionResponse.stats:type_name -> butterbox.pi.v1.SessionStats
-	20, // 4: butterbox.pi.v1.SendMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
-	19, // 5: butterbox.pi.v1.SendMessageResponse.stats:type_name -> butterbox.pi.v1.SessionStats
-	20, // 6: butterbox.pi.v1.StreamMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
-	12, // 7: butterbox.pi.v1.GetAvailableModelsResponse.models:type_name -> butterbox.pi.v1.Model
-	13, // 8: butterbox.pi.v1.Model.cost:type_name -> butterbox.pi.v1.ModelCost
-	0,  // 9: butterbox.pi.v1.PiService.CreateSession:input_type -> butterbox.pi.v1.CreateSessionRequest
-	2,  // 10: butterbox.pi.v1.PiService.ListSessions:input_type -> butterbox.pi.v1.ListSessionsRequest
-	4,  // 11: butterbox.pi.v1.PiService.GetSession:input_type -> butterbox.pi.v1.GetSessionRequest
-	6,  // 12: butterbox.pi.v1.PiService.SendMessage:input_type -> butterbox.pi.v1.SendMessageRequest
-	8,  // 13: butterbox.pi.v1.PiService.StreamMessage:input_type -> butterbox.pi.v1.StreamMessageRequest
-	10, // 14: butterbox.pi.v1.PiService.GetAvailableModels:input_type -> butterbox.pi.v1.GetAvailableModelsRequest
-	14, // 15: butterbox.pi.v1.PiService.AbortSession:input_type -> butterbox.pi.v1.AbortSessionRequest
-	16, // 16: butterbox.pi.v1.PiService.DeleteSession:input_type -> butterbox.pi.v1.DeleteSessionRequest
-	1,  // 17: butterbox.pi.v1.PiService.CreateSession:output_type -> butterbox.pi.v1.CreateSessionResponse
-	3,  // 18: butterbox.pi.v1.PiService.ListSessions:output_type -> butterbox.pi.v1.ListSessionsResponse
-	5,  // 19: butterbox.pi.v1.PiService.GetSession:output_type -> butterbox.pi.v1.GetSessionResponse
-	7,  // 20: butterbox.pi.v1.PiService.SendMessage:output_type -> butterbox.pi.v1.SendMessageResponse
-	9,  // 21: butterbox.pi.v1.PiService.StreamMessage:output_type -> butterbox.pi.v1.StreamMessageResponse
-	11, // 22: butterbox.pi.v1.PiService.GetAvailableModels:output_type -> butterbox.pi.v1.GetAvailableModelsResponse
-	15, // 23: butterbox.pi.v1.PiService.AbortSession:output_type -> butterbox.pi.v1.AbortSessionResponse
-	17, // 24: butterbox.pi.v1.PiService.DeleteSession:output_type -> butterbox.pi.v1.DeleteSessionResponse
-	17, // [17:25] is the sub-list for method output_type
-	9,  // [9:17] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	23, // 0: butterbox.pi.v1.CreateSessionResponse.session:type_name -> butterbox.pi.v1.Session
+	23, // 1: butterbox.pi.v1.ListSessionsResponse.sessions:type_name -> butterbox.pi.v1.Session
+	23, // 2: butterbox.pi.v1.GetSessionResponse.session:type_name -> butterbox.pi.v1.Session
+	24, // 3: butterbox.pi.v1.GetSessionResponse.stats:type_name -> butterbox.pi.v1.SessionStats
+	25, // 4: butterbox.pi.v1.SendMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
+	24, // 5: butterbox.pi.v1.SendMessageResponse.stats:type_name -> butterbox.pi.v1.SessionStats
+	25, // 6: butterbox.pi.v1.StreamMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
+	25, // 7: butterbox.pi.v1.SubmitMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
+	14, // 8: butterbox.pi.v1.GetTurnResponse.result:type_name -> butterbox.pi.v1.TurnResult
+	24, // 9: butterbox.pi.v1.TurnResult.stats:type_name -> butterbox.pi.v1.SessionStats
+	17, // 10: butterbox.pi.v1.GetAvailableModelsResponse.models:type_name -> butterbox.pi.v1.Model
+	18, // 11: butterbox.pi.v1.Model.cost:type_name -> butterbox.pi.v1.ModelCost
+	0,  // 12: butterbox.pi.v1.PiService.CreateSession:input_type -> butterbox.pi.v1.CreateSessionRequest
+	2,  // 13: butterbox.pi.v1.PiService.ListSessions:input_type -> butterbox.pi.v1.ListSessionsRequest
+	4,  // 14: butterbox.pi.v1.PiService.GetSession:input_type -> butterbox.pi.v1.GetSessionRequest
+	6,  // 15: butterbox.pi.v1.PiService.SendMessage:input_type -> butterbox.pi.v1.SendMessageRequest
+	8,  // 16: butterbox.pi.v1.PiService.StreamMessage:input_type -> butterbox.pi.v1.StreamMessageRequest
+	10, // 17: butterbox.pi.v1.PiService.SubmitMessage:input_type -> butterbox.pi.v1.SubmitMessageRequest
+	12, // 18: butterbox.pi.v1.PiService.GetTurn:input_type -> butterbox.pi.v1.GetTurnRequest
+	15, // 19: butterbox.pi.v1.PiService.GetAvailableModels:input_type -> butterbox.pi.v1.GetAvailableModelsRequest
+	19, // 20: butterbox.pi.v1.PiService.AbortSession:input_type -> butterbox.pi.v1.AbortSessionRequest
+	21, // 21: butterbox.pi.v1.PiService.DeleteSession:input_type -> butterbox.pi.v1.DeleteSessionRequest
+	1,  // 22: butterbox.pi.v1.PiService.CreateSession:output_type -> butterbox.pi.v1.CreateSessionResponse
+	3,  // 23: butterbox.pi.v1.PiService.ListSessions:output_type -> butterbox.pi.v1.ListSessionsResponse
+	5,  // 24: butterbox.pi.v1.PiService.GetSession:output_type -> butterbox.pi.v1.GetSessionResponse
+	7,  // 25: butterbox.pi.v1.PiService.SendMessage:output_type -> butterbox.pi.v1.SendMessageResponse
+	9,  // 26: butterbox.pi.v1.PiService.StreamMessage:output_type -> butterbox.pi.v1.StreamMessageResponse
+	11, // 27: butterbox.pi.v1.PiService.SubmitMessage:output_type -> butterbox.pi.v1.SubmitMessageResponse
+	13, // 28: butterbox.pi.v1.PiService.GetTurn:output_type -> butterbox.pi.v1.GetTurnResponse
+	16, // 29: butterbox.pi.v1.PiService.GetAvailableModels:output_type -> butterbox.pi.v1.GetAvailableModelsResponse
+	20, // 30: butterbox.pi.v1.PiService.AbortSession:output_type -> butterbox.pi.v1.AbortSessionResponse
+	22, // 31: butterbox.pi.v1.PiService.DeleteSession:output_type -> butterbox.pi.v1.DeleteSessionResponse
+	22, // [22:32] is the sub-list for method output_type
+	12, // [12:22] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_butterbox_pi_v1_pi_proto_init() }
@@ -1401,7 +1728,7 @@ func file_butterbox_pi_v1_pi_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_butterbox_pi_v1_pi_proto_rawDesc), len(file_butterbox_pi_v1_pi_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
