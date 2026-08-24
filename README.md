@@ -130,7 +130,7 @@ When `PI_API_ENABLED=true`, ButterBox exposes the [pi coding agent](https://gith
 
 Each session maps to a supervised `pi --mode rpc` child process speaking pi's JSONL RPC protocol. Session IDs are pi's own session IDs and session data lives in pi's session directory, so idle sessions are stopped and transparently re-attached on next use — and every API-driven session shows up in pi-web when that is enabled too. Extension UI dialogs are auto-cancelled so a headless run can never wedge.
 
-RPCs: `CreateSession`, `ListSessions`, `GetSession`, `SendMessage` (unary, returns after the run fully settles), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+RPCs: `CreateSession`, `ListSessions`, `GetSession`, `GetAvailableModels` (models the session's pi process can use, with provider, modalities, limits, and USD-per-million-token costs), `SendMessage` (unary, returns after the run fully settles), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
 
 ConnectRPC speaks plain JSON over HTTP POST, so curl works:
 

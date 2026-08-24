@@ -43,6 +43,9 @@ const (
 	PiServiceSendMessageProcedure = "/butterbox.pi.v1.PiService/SendMessage"
 	// PiServiceStreamMessageProcedure is the fully-qualified name of the PiService's StreamMessage RPC.
 	PiServiceStreamMessageProcedure = "/butterbox.pi.v1.PiService/StreamMessage"
+	// PiServiceGetAvailableModelsProcedure is the fully-qualified name of the PiService's
+	// GetAvailableModels RPC.
+	PiServiceGetAvailableModelsProcedure = "/butterbox.pi.v1.PiService/GetAvailableModels"
 	// PiServiceAbortSessionProcedure is the fully-qualified name of the PiService's AbortSession RPC.
 	PiServiceAbortSessionProcedure = "/butterbox.pi.v1.PiService/AbortSession"
 	// PiServiceDeleteSessionProcedure is the fully-qualified name of the PiService's DeleteSession RPC.
@@ -65,6 +68,10 @@ type PiServiceClient interface {
 	// StreamMessage sends one prompt and streams raw pi events until the run
 	// settles. The final message has type "agent_settled".
 	StreamMessage(context.Context, *connect.Request[v1.StreamMessageRequest]) (*connect.ServerStreamForClient[v1.StreamMessageResponse], error)
+	// GetAvailableModels reports the models the session's pi process can use
+	// (as configured by pi's providers/auth on this box), re-attaching the
+	// session if it is not currently active.
+	GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error)
 	// AbortSession aborts the in-flight run, if any.
 	AbortSession(context.Context, *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error)
 	// DeleteSession stops the session process. The session file on disk is
@@ -113,6 +120,12 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(piServiceMethods.ByName("StreamMessage")),
 			connect.WithClientOptions(opts...),
 		),
+		getAvailableModels: connect.NewClient[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse](
+			httpClient,
+			baseURL+PiServiceGetAvailableModelsProcedure,
+			connect.WithSchema(piServiceMethods.ByName("GetAvailableModels")),
+			connect.WithClientOptions(opts...),
+		),
 		abortSession: connect.NewClient[v1.AbortSessionRequest, v1.AbortSessionResponse](
 			httpClient,
 			baseURL+PiServiceAbortSessionProcedure,
@@ -130,13 +143,14 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 
 // piServiceClient implements PiServiceClient.
 type piServiceClient struct {
-	createSession *connect.Client[v1.CreateSessionRequest, v1.CreateSessionResponse]
-	listSessions  *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
-	getSession    *connect.Client[v1.GetSessionRequest, v1.GetSessionResponse]
-	sendMessage   *connect.Client[v1.SendMessageRequest, v1.SendMessageResponse]
-	streamMessage *connect.Client[v1.StreamMessageRequest, v1.StreamMessageResponse]
-	abortSession  *connect.Client[v1.AbortSessionRequest, v1.AbortSessionResponse]
-	deleteSession *connect.Client[v1.DeleteSessionRequest, v1.DeleteSessionResponse]
+	createSession      *connect.Client[v1.CreateSessionRequest, v1.CreateSessionResponse]
+	listSessions       *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	getSession         *connect.Client[v1.GetSessionRequest, v1.GetSessionResponse]
+	sendMessage        *connect.Client[v1.SendMessageRequest, v1.SendMessageResponse]
+	streamMessage      *connect.Client[v1.StreamMessageRequest, v1.StreamMessageResponse]
+	getAvailableModels *connect.Client[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse]
+	abortSession       *connect.Client[v1.AbortSessionRequest, v1.AbortSessionResponse]
+	deleteSession      *connect.Client[v1.DeleteSessionRequest, v1.DeleteSessionResponse]
 }
 
 // CreateSession calls butterbox.pi.v1.PiService.CreateSession.
@@ -162,6 +176,11 @@ func (c *piServiceClient) SendMessage(ctx context.Context, req *connect.Request[
 // StreamMessage calls butterbox.pi.v1.PiService.StreamMessage.
 func (c *piServiceClient) StreamMessage(ctx context.Context, req *connect.Request[v1.StreamMessageRequest]) (*connect.ServerStreamForClient[v1.StreamMessageResponse], error) {
 	return c.streamMessage.CallServerStream(ctx, req)
+}
+
+// GetAvailableModels calls butterbox.pi.v1.PiService.GetAvailableModels.
+func (c *piServiceClient) GetAvailableModels(ctx context.Context, req *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error) {
+	return c.getAvailableModels.CallUnary(ctx, req)
 }
 
 // AbortSession calls butterbox.pi.v1.PiService.AbortSession.
@@ -190,6 +209,10 @@ type PiServiceHandler interface {
 	// StreamMessage sends one prompt and streams raw pi events until the run
 	// settles. The final message has type "agent_settled".
 	StreamMessage(context.Context, *connect.Request[v1.StreamMessageRequest], *connect.ServerStream[v1.StreamMessageResponse]) error
+	// GetAvailableModels reports the models the session's pi process can use
+	// (as configured by pi's providers/auth on this box), re-attaching the
+	// session if it is not currently active.
+	GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error)
 	// AbortSession aborts the in-flight run, if any.
 	AbortSession(context.Context, *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error)
 	// DeleteSession stops the session process. The session file on disk is
@@ -234,6 +257,12 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(piServiceMethods.ByName("StreamMessage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	piServiceGetAvailableModelsHandler := connect.NewUnaryHandler(
+		PiServiceGetAvailableModelsProcedure,
+		svc.GetAvailableModels,
+		connect.WithSchema(piServiceMethods.ByName("GetAvailableModels")),
+		connect.WithHandlerOptions(opts...),
+	)
 	piServiceAbortSessionHandler := connect.NewUnaryHandler(
 		PiServiceAbortSessionProcedure,
 		svc.AbortSession,
@@ -258,6 +287,8 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 			piServiceSendMessageHandler.ServeHTTP(w, r)
 		case PiServiceStreamMessageProcedure:
 			piServiceStreamMessageHandler.ServeHTTP(w, r)
+		case PiServiceGetAvailableModelsProcedure:
+			piServiceGetAvailableModelsHandler.ServeHTTP(w, r)
 		case PiServiceAbortSessionProcedure:
 			piServiceAbortSessionHandler.ServeHTTP(w, r)
 		case PiServiceDeleteSessionProcedure:
@@ -289,6 +320,10 @@ func (UnimplementedPiServiceHandler) SendMessage(context.Context, *connect.Reque
 
 func (UnimplementedPiServiceHandler) StreamMessage(context.Context, *connect.Request[v1.StreamMessageRequest], *connect.ServerStream[v1.StreamMessageResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.StreamMessage is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.GetAvailableModels is not implemented"))
 }
 
 func (UnimplementedPiServiceHandler) AbortSession(context.Context, *connect.Request[v1.AbortSessionRequest]) (*connect.Response[v1.AbortSessionResponse], error) {

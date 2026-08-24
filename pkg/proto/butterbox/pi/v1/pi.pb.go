@@ -551,6 +551,279 @@ func (x *StreamMessageResponse) GetPayloadJson() string {
 	return ""
 }
 
+type GetAvailableModelsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAvailableModelsRequest) Reset() {
+	*x = GetAvailableModelsRequest{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAvailableModelsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAvailableModelsRequest) ProtoMessage() {}
+
+func (x *GetAvailableModelsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAvailableModelsRequest.ProtoReflect.Descriptor instead.
+func (*GetAvailableModelsRequest) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetAvailableModelsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type GetAvailableModelsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Models        []*Model               `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAvailableModelsResponse) Reset() {
+	*x = GetAvailableModelsResponse{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAvailableModelsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAvailableModelsResponse) ProtoMessage() {}
+
+func (x *GetAvailableModelsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAvailableModelsResponse.ProtoReflect.Descriptor instead.
+func (*GetAvailableModelsResponse) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *GetAvailableModelsResponse) GetModels() []*Model {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
+type Model struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Model ID as accepted by pi's --model flag and set_model (e.g.
+	// "claude-fable-5").
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Provider ID (e.g. "anthropic").
+	Provider string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	// Human-readable model name.
+	Name string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	// Wire API the model speaks (e.g. "anthropic-messages",
+	// "openai-responses").
+	Api string `protobuf:"bytes,4,opt,name=api,proto3" json:"api,omitempty"`
+	// True when the model supports reasoning/thinking.
+	Reasoning bool `protobuf:"varint,5,opt,name=reasoning,proto3" json:"reasoning,omitempty"`
+	// Supported input modalities: "text", "image".
+	Input         []string `protobuf:"bytes,6,rep,name=input,proto3" json:"input,omitempty"`
+	ContextWindow int64    `protobuf:"varint,7,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
+	MaxTokens     int64    `protobuf:"varint,8,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	// Cost in USD per million tokens.
+	Cost          *ModelCost `protobuf:"bytes,9,opt,name=cost,proto3" json:"cost,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Model) Reset() {
+	*x = Model{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Model) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Model) ProtoMessage() {}
+
+func (x *Model) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Model.ProtoReflect.Descriptor instead.
+func (*Model) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Model) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Model) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *Model) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Model) GetApi() string {
+	if x != nil {
+		return x.Api
+	}
+	return ""
+}
+
+func (x *Model) GetReasoning() bool {
+	if x != nil {
+		return x.Reasoning
+	}
+	return false
+}
+
+func (x *Model) GetInput() []string {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *Model) GetContextWindow() int64 {
+	if x != nil {
+		return x.ContextWindow
+	}
+	return 0
+}
+
+func (x *Model) GetMaxTokens() int64 {
+	if x != nil {
+		return x.MaxTokens
+	}
+	return 0
+}
+
+func (x *Model) GetCost() *ModelCost {
+	if x != nil {
+		return x.Cost
+	}
+	return nil
+}
+
+type ModelCost struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Input         float64                `protobuf:"fixed64,1,opt,name=input,proto3" json:"input,omitempty"`
+	Output        float64                `protobuf:"fixed64,2,opt,name=output,proto3" json:"output,omitempty"`
+	CacheRead     float64                `protobuf:"fixed64,3,opt,name=cache_read,json=cacheRead,proto3" json:"cache_read,omitempty"`
+	CacheWrite    float64                `protobuf:"fixed64,4,opt,name=cache_write,json=cacheWrite,proto3" json:"cache_write,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModelCost) Reset() {
+	*x = ModelCost{}
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelCost) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelCost) ProtoMessage() {}
+
+func (x *ModelCost) ProtoReflect() protoreflect.Message {
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelCost.ProtoReflect.Descriptor instead.
+func (*ModelCost) Descriptor() ([]byte, []int) {
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ModelCost) GetInput() float64 {
+	if x != nil {
+		return x.Input
+	}
+	return 0
+}
+
+func (x *ModelCost) GetOutput() float64 {
+	if x != nil {
+		return x.Output
+	}
+	return 0
+}
+
+func (x *ModelCost) GetCacheRead() float64 {
+	if x != nil {
+		return x.CacheRead
+	}
+	return 0
+}
+
+func (x *ModelCost) GetCacheWrite() float64 {
+	if x != nil {
+		return x.CacheWrite
+	}
+	return 0
+}
+
 type AbortSessionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -560,7 +833,7 @@ type AbortSessionRequest struct {
 
 func (x *AbortSessionRequest) Reset() {
 	*x = AbortSessionRequest{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -572,7 +845,7 @@ func (x *AbortSessionRequest) String() string {
 func (*AbortSessionRequest) ProtoMessage() {}
 
 func (x *AbortSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[10]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -585,7 +858,7 @@ func (x *AbortSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbortSessionRequest.ProtoReflect.Descriptor instead.
 func (*AbortSessionRequest) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{10}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AbortSessionRequest) GetSessionId() string {
@@ -603,7 +876,7 @@ type AbortSessionResponse struct {
 
 func (x *AbortSessionResponse) Reset() {
 	*x = AbortSessionResponse{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +888,7 @@ func (x *AbortSessionResponse) String() string {
 func (*AbortSessionResponse) ProtoMessage() {}
 
 func (x *AbortSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[11]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +901,7 @@ func (x *AbortSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbortSessionResponse.ProtoReflect.Descriptor instead.
 func (*AbortSessionResponse) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{11}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{15}
 }
 
 type DeleteSessionRequest struct {
@@ -642,7 +915,7 @@ type DeleteSessionRequest struct {
 
 func (x *DeleteSessionRequest) Reset() {
 	*x = DeleteSessionRequest{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -654,7 +927,7 @@ func (x *DeleteSessionRequest) String() string {
 func (*DeleteSessionRequest) ProtoMessage() {}
 
 func (x *DeleteSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[12]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -667,7 +940,7 @@ func (x *DeleteSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSessionRequest.ProtoReflect.Descriptor instead.
 func (*DeleteSessionRequest) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{12}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *DeleteSessionRequest) GetSessionId() string {
@@ -692,7 +965,7 @@ type DeleteSessionResponse struct {
 
 func (x *DeleteSessionResponse) Reset() {
 	*x = DeleteSessionResponse{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -704,7 +977,7 @@ func (x *DeleteSessionResponse) String() string {
 func (*DeleteSessionResponse) ProtoMessage() {}
 
 func (x *DeleteSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[13]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -717,7 +990,7 @@ func (x *DeleteSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteSessionResponse.ProtoReflect.Descriptor instead.
 func (*DeleteSessionResponse) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{13}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{17}
 }
 
 type Session struct {
@@ -739,7 +1012,7 @@ type Session struct {
 
 func (x *Session) Reset() {
 	*x = Session{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -751,7 +1024,7 @@ func (x *Session) String() string {
 func (*Session) ProtoMessage() {}
 
 func (x *Session) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[14]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -764,7 +1037,7 @@ func (x *Session) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Session.ProtoReflect.Descriptor instead.
 func (*Session) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{14}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Session) GetId() string {
@@ -825,7 +1098,7 @@ type SessionStats struct {
 
 func (x *SessionStats) Reset() {
 	*x = SessionStats{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -837,7 +1110,7 @@ func (x *SessionStats) String() string {
 func (*SessionStats) ProtoMessage() {}
 
 func (x *SessionStats) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[15]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -850,7 +1123,7 @@ func (x *SessionStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStats.ProtoReflect.Descriptor instead.
 func (*SessionStats) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{15}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SessionStats) GetInputTokens() int64 {
@@ -907,7 +1180,7 @@ type ImageContent struct {
 
 func (x *ImageContent) Reset() {
 	*x = ImageContent{}
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -919,7 +1192,7 @@ func (x *ImageContent) String() string {
 func (*ImageContent) ProtoMessage() {}
 
 func (x *ImageContent) ProtoReflect() protoreflect.Message {
-	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[16]
+	mi := &file_butterbox_pi_v1_pi_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -932,7 +1205,7 @@ func (x *ImageContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageContent.ProtoReflect.Descriptor instead.
 func (*ImageContent) Descriptor() ([]byte, []int) {
-	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{16}
+	return file_butterbox_pi_v1_pi_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ImageContent) GetMimeType() string {
@@ -987,7 +1260,30 @@ const file_butterbox_pi_v1_pi_proto_rawDesc = "" +
 	"\x06images\x18\x03 \x03(\v2\x1d.butterbox.pi.v1.ImageContentR\x06images\"N\n" +
 	"\x15StreamMessageResponse\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
-	"\fpayload_json\x18\x02 \x01(\tR\vpayloadJson\"4\n" +
+	"\fpayload_json\x18\x02 \x01(\tR\vpayloadJson\":\n" +
+	"\x19GetAvailableModelsRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"L\n" +
+	"\x1aGetAvailableModelsResponse\x12.\n" +
+	"\x06models\x18\x01 \x03(\v2\x16.butterbox.pi.v1.ModelR\x06models\"\x83\x02\n" +
+	"\x05Model\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
+	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x10\n" +
+	"\x03api\x18\x04 \x01(\tR\x03api\x12\x1c\n" +
+	"\treasoning\x18\x05 \x01(\bR\treasoning\x12\x14\n" +
+	"\x05input\x18\x06 \x03(\tR\x05input\x12%\n" +
+	"\x0econtext_window\x18\a \x01(\x03R\rcontextWindow\x12\x1d\n" +
+	"\n" +
+	"max_tokens\x18\b \x01(\x03R\tmaxTokens\x12.\n" +
+	"\x04cost\x18\t \x01(\v2\x1a.butterbox.pi.v1.ModelCostR\x04cost\"y\n" +
+	"\tModelCost\x12\x14\n" +
+	"\x05input\x18\x01 \x01(\x01R\x05input\x12\x16\n" +
+	"\x06output\x18\x02 \x01(\x01R\x06output\x12\x1d\n" +
+	"\n" +
+	"cache_read\x18\x03 \x01(\x01R\tcacheRead\x12\x1f\n" +
+	"\vcache_write\x18\x04 \x01(\x01R\n" +
+	"cacheWrite\"4\n" +
 	"\x13AbortSessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x16\n" +
@@ -1013,14 +1309,15 @@ const file_butterbox_pi_v1_pi_proto_rawDesc = "" +
 	"\x0fcontext_percent\x18\x06 \x01(\x05R\x0econtextPercent\"?\n" +
 	"\fImageContent\x12\x1b\n" +
 	"\tmime_type\x18\x01 \x01(\tR\bmimeType\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data2\x98\x05\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data2\x87\x06\n" +
 	"\tPiService\x12^\n" +
 	"\rCreateSession\x12%.butterbox.pi.v1.CreateSessionRequest\x1a&.butterbox.pi.v1.CreateSessionResponse\x12[\n" +
 	"\fListSessions\x12$.butterbox.pi.v1.ListSessionsRequest\x1a%.butterbox.pi.v1.ListSessionsResponse\x12U\n" +
 	"\n" +
 	"GetSession\x12\".butterbox.pi.v1.GetSessionRequest\x1a#.butterbox.pi.v1.GetSessionResponse\x12X\n" +
 	"\vSendMessage\x12#.butterbox.pi.v1.SendMessageRequest\x1a$.butterbox.pi.v1.SendMessageResponse\x12`\n" +
-	"\rStreamMessage\x12%.butterbox.pi.v1.StreamMessageRequest\x1a&.butterbox.pi.v1.StreamMessageResponse0\x01\x12[\n" +
+	"\rStreamMessage\x12%.butterbox.pi.v1.StreamMessageRequest\x1a&.butterbox.pi.v1.StreamMessageResponse0\x01\x12m\n" +
+	"\x12GetAvailableModels\x12*.butterbox.pi.v1.GetAvailableModelsRequest\x1a+.butterbox.pi.v1.GetAvailableModelsResponse\x12[\n" +
 	"\fAbortSession\x12$.butterbox.pi.v1.AbortSessionRequest\x1a%.butterbox.pi.v1.AbortSessionResponse\x12^\n" +
 	"\rDeleteSession\x12%.butterbox.pi.v1.DeleteSessionRequest\x1a&.butterbox.pi.v1.DeleteSessionResponseB=Z;github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1;piv1b\x06proto3"
 
@@ -1036,53 +1333,61 @@ func file_butterbox_pi_v1_pi_proto_rawDescGZIP() []byte {
 	return file_butterbox_pi_v1_pi_proto_rawDescData
 }
 
-var file_butterbox_pi_v1_pi_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_butterbox_pi_v1_pi_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_butterbox_pi_v1_pi_proto_goTypes = []any{
-	(*CreateSessionRequest)(nil),  // 0: butterbox.pi.v1.CreateSessionRequest
-	(*CreateSessionResponse)(nil), // 1: butterbox.pi.v1.CreateSessionResponse
-	(*ListSessionsRequest)(nil),   // 2: butterbox.pi.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),  // 3: butterbox.pi.v1.ListSessionsResponse
-	(*GetSessionRequest)(nil),     // 4: butterbox.pi.v1.GetSessionRequest
-	(*GetSessionResponse)(nil),    // 5: butterbox.pi.v1.GetSessionResponse
-	(*SendMessageRequest)(nil),    // 6: butterbox.pi.v1.SendMessageRequest
-	(*SendMessageResponse)(nil),   // 7: butterbox.pi.v1.SendMessageResponse
-	(*StreamMessageRequest)(nil),  // 8: butterbox.pi.v1.StreamMessageRequest
-	(*StreamMessageResponse)(nil), // 9: butterbox.pi.v1.StreamMessageResponse
-	(*AbortSessionRequest)(nil),   // 10: butterbox.pi.v1.AbortSessionRequest
-	(*AbortSessionResponse)(nil),  // 11: butterbox.pi.v1.AbortSessionResponse
-	(*DeleteSessionRequest)(nil),  // 12: butterbox.pi.v1.DeleteSessionRequest
-	(*DeleteSessionResponse)(nil), // 13: butterbox.pi.v1.DeleteSessionResponse
-	(*Session)(nil),               // 14: butterbox.pi.v1.Session
-	(*SessionStats)(nil),          // 15: butterbox.pi.v1.SessionStats
-	(*ImageContent)(nil),          // 16: butterbox.pi.v1.ImageContent
+	(*CreateSessionRequest)(nil),       // 0: butterbox.pi.v1.CreateSessionRequest
+	(*CreateSessionResponse)(nil),      // 1: butterbox.pi.v1.CreateSessionResponse
+	(*ListSessionsRequest)(nil),        // 2: butterbox.pi.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),       // 3: butterbox.pi.v1.ListSessionsResponse
+	(*GetSessionRequest)(nil),          // 4: butterbox.pi.v1.GetSessionRequest
+	(*GetSessionResponse)(nil),         // 5: butterbox.pi.v1.GetSessionResponse
+	(*SendMessageRequest)(nil),         // 6: butterbox.pi.v1.SendMessageRequest
+	(*SendMessageResponse)(nil),        // 7: butterbox.pi.v1.SendMessageResponse
+	(*StreamMessageRequest)(nil),       // 8: butterbox.pi.v1.StreamMessageRequest
+	(*StreamMessageResponse)(nil),      // 9: butterbox.pi.v1.StreamMessageResponse
+	(*GetAvailableModelsRequest)(nil),  // 10: butterbox.pi.v1.GetAvailableModelsRequest
+	(*GetAvailableModelsResponse)(nil), // 11: butterbox.pi.v1.GetAvailableModelsResponse
+	(*Model)(nil),                      // 12: butterbox.pi.v1.Model
+	(*ModelCost)(nil),                  // 13: butterbox.pi.v1.ModelCost
+	(*AbortSessionRequest)(nil),        // 14: butterbox.pi.v1.AbortSessionRequest
+	(*AbortSessionResponse)(nil),       // 15: butterbox.pi.v1.AbortSessionResponse
+	(*DeleteSessionRequest)(nil),       // 16: butterbox.pi.v1.DeleteSessionRequest
+	(*DeleteSessionResponse)(nil),      // 17: butterbox.pi.v1.DeleteSessionResponse
+	(*Session)(nil),                    // 18: butterbox.pi.v1.Session
+	(*SessionStats)(nil),               // 19: butterbox.pi.v1.SessionStats
+	(*ImageContent)(nil),               // 20: butterbox.pi.v1.ImageContent
 }
 var file_butterbox_pi_v1_pi_proto_depIdxs = []int32{
-	14, // 0: butterbox.pi.v1.CreateSessionResponse.session:type_name -> butterbox.pi.v1.Session
-	14, // 1: butterbox.pi.v1.ListSessionsResponse.sessions:type_name -> butterbox.pi.v1.Session
-	14, // 2: butterbox.pi.v1.GetSessionResponse.session:type_name -> butterbox.pi.v1.Session
-	15, // 3: butterbox.pi.v1.GetSessionResponse.stats:type_name -> butterbox.pi.v1.SessionStats
-	16, // 4: butterbox.pi.v1.SendMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
-	15, // 5: butterbox.pi.v1.SendMessageResponse.stats:type_name -> butterbox.pi.v1.SessionStats
-	16, // 6: butterbox.pi.v1.StreamMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
-	0,  // 7: butterbox.pi.v1.PiService.CreateSession:input_type -> butterbox.pi.v1.CreateSessionRequest
-	2,  // 8: butterbox.pi.v1.PiService.ListSessions:input_type -> butterbox.pi.v1.ListSessionsRequest
-	4,  // 9: butterbox.pi.v1.PiService.GetSession:input_type -> butterbox.pi.v1.GetSessionRequest
-	6,  // 10: butterbox.pi.v1.PiService.SendMessage:input_type -> butterbox.pi.v1.SendMessageRequest
-	8,  // 11: butterbox.pi.v1.PiService.StreamMessage:input_type -> butterbox.pi.v1.StreamMessageRequest
-	10, // 12: butterbox.pi.v1.PiService.AbortSession:input_type -> butterbox.pi.v1.AbortSessionRequest
-	12, // 13: butterbox.pi.v1.PiService.DeleteSession:input_type -> butterbox.pi.v1.DeleteSessionRequest
-	1,  // 14: butterbox.pi.v1.PiService.CreateSession:output_type -> butterbox.pi.v1.CreateSessionResponse
-	3,  // 15: butterbox.pi.v1.PiService.ListSessions:output_type -> butterbox.pi.v1.ListSessionsResponse
-	5,  // 16: butterbox.pi.v1.PiService.GetSession:output_type -> butterbox.pi.v1.GetSessionResponse
-	7,  // 17: butterbox.pi.v1.PiService.SendMessage:output_type -> butterbox.pi.v1.SendMessageResponse
-	9,  // 18: butterbox.pi.v1.PiService.StreamMessage:output_type -> butterbox.pi.v1.StreamMessageResponse
-	11, // 19: butterbox.pi.v1.PiService.AbortSession:output_type -> butterbox.pi.v1.AbortSessionResponse
-	13, // 20: butterbox.pi.v1.PiService.DeleteSession:output_type -> butterbox.pi.v1.DeleteSessionResponse
-	14, // [14:21] is the sub-list for method output_type
-	7,  // [7:14] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	18, // 0: butterbox.pi.v1.CreateSessionResponse.session:type_name -> butterbox.pi.v1.Session
+	18, // 1: butterbox.pi.v1.ListSessionsResponse.sessions:type_name -> butterbox.pi.v1.Session
+	18, // 2: butterbox.pi.v1.GetSessionResponse.session:type_name -> butterbox.pi.v1.Session
+	19, // 3: butterbox.pi.v1.GetSessionResponse.stats:type_name -> butterbox.pi.v1.SessionStats
+	20, // 4: butterbox.pi.v1.SendMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
+	19, // 5: butterbox.pi.v1.SendMessageResponse.stats:type_name -> butterbox.pi.v1.SessionStats
+	20, // 6: butterbox.pi.v1.StreamMessageRequest.images:type_name -> butterbox.pi.v1.ImageContent
+	12, // 7: butterbox.pi.v1.GetAvailableModelsResponse.models:type_name -> butterbox.pi.v1.Model
+	13, // 8: butterbox.pi.v1.Model.cost:type_name -> butterbox.pi.v1.ModelCost
+	0,  // 9: butterbox.pi.v1.PiService.CreateSession:input_type -> butterbox.pi.v1.CreateSessionRequest
+	2,  // 10: butterbox.pi.v1.PiService.ListSessions:input_type -> butterbox.pi.v1.ListSessionsRequest
+	4,  // 11: butterbox.pi.v1.PiService.GetSession:input_type -> butterbox.pi.v1.GetSessionRequest
+	6,  // 12: butterbox.pi.v1.PiService.SendMessage:input_type -> butterbox.pi.v1.SendMessageRequest
+	8,  // 13: butterbox.pi.v1.PiService.StreamMessage:input_type -> butterbox.pi.v1.StreamMessageRequest
+	10, // 14: butterbox.pi.v1.PiService.GetAvailableModels:input_type -> butterbox.pi.v1.GetAvailableModelsRequest
+	14, // 15: butterbox.pi.v1.PiService.AbortSession:input_type -> butterbox.pi.v1.AbortSessionRequest
+	16, // 16: butterbox.pi.v1.PiService.DeleteSession:input_type -> butterbox.pi.v1.DeleteSessionRequest
+	1,  // 17: butterbox.pi.v1.PiService.CreateSession:output_type -> butterbox.pi.v1.CreateSessionResponse
+	3,  // 18: butterbox.pi.v1.PiService.ListSessions:output_type -> butterbox.pi.v1.ListSessionsResponse
+	5,  // 19: butterbox.pi.v1.PiService.GetSession:output_type -> butterbox.pi.v1.GetSessionResponse
+	7,  // 20: butterbox.pi.v1.PiService.SendMessage:output_type -> butterbox.pi.v1.SendMessageResponse
+	9,  // 21: butterbox.pi.v1.PiService.StreamMessage:output_type -> butterbox.pi.v1.StreamMessageResponse
+	11, // 22: butterbox.pi.v1.PiService.GetAvailableModels:output_type -> butterbox.pi.v1.GetAvailableModelsResponse
+	15, // 23: butterbox.pi.v1.PiService.AbortSession:output_type -> butterbox.pi.v1.AbortSessionResponse
+	17, // 24: butterbox.pi.v1.PiService.DeleteSession:output_type -> butterbox.pi.v1.DeleteSessionResponse
+	17, // [17:25] is the sub-list for method output_type
+	9,  // [9:17] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_butterbox_pi_v1_pi_proto_init() }
@@ -1096,7 +1401,7 @@ func file_butterbox_pi_v1_pi_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_butterbox_pi_v1_pi_proto_rawDesc), len(file_butterbox_pi_v1_pi_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

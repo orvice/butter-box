@@ -80,6 +80,33 @@ func (s *Service) StreamMessage(ctx context.Context, req *connect.Request[piv1.S
 	return nil
 }
 
+func (s *Service) GetAvailableModels(ctx context.Context, req *connect.Request[piv1.GetAvailableModelsRequest]) (*connect.Response[piv1.GetAvailableModelsResponse], error) {
+	models, err := s.manager.AvailableModels(ctx, req.Msg.GetSessionId())
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	resp := &piv1.GetAvailableModelsResponse{}
+	for _, m := range models {
+		resp.Models = append(resp.Models, &piv1.Model{
+			Id:            m.ID,
+			Provider:      m.Provider,
+			Name:          m.Name,
+			Api:           m.API,
+			Reasoning:     m.Reasoning,
+			Input:         m.Input,
+			ContextWindow: m.ContextWindow,
+			MaxTokens:     m.MaxTokens,
+			Cost: &piv1.ModelCost{
+				Input:      m.CostInput,
+				Output:     m.CostOutput,
+				CacheRead:  m.CostCacheRead,
+				CacheWrite: m.CostCacheWrite,
+			},
+		})
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Service) AbortSession(ctx context.Context, req *connect.Request[piv1.AbortSessionRequest]) (*connect.Response[piv1.AbortSessionResponse], error) {
 	if err := s.manager.Abort(ctx, req.Msg.GetSessionId()); err != nil {
 		return nil, rpcError(err)

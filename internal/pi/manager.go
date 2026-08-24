@@ -79,6 +79,23 @@ type Stats struct {
 	ContextPercent int32
 }
 
+// Model describes one model available to a pi process.
+type Model struct {
+	ID            string
+	Provider      string
+	Name          string
+	API           string
+	Reasoning     bool
+	Input         []string
+	ContextWindow int64
+	MaxTokens     int64
+	// Costs are USD per million tokens.
+	CostInput      float64
+	CostOutput     float64
+	CostCacheRead  float64
+	CostCacheWrite float64
+}
+
 // SendResult is the outcome of one settled prompt run.
 type SendResult struct {
 	Text       string
@@ -334,6 +351,45 @@ func (m *Manager) waitSettled(ctx context.Context, proc *process, sub *subscript
 			return "", proc.exitError()
 		}
 	}
+}
+
+// AvailableModels reports the models the session's pi process can use,
+// re-attaching the session if needed.
+func (m *Manager) AvailableModels(ctx context.Context, id string) ([]Model, error) {
+	s, err := m.attach(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	data, err := s.proc.callOK(ctx, map[string]any{"type": "get_available_models"})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Models []modelData `json:"models"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode get_available_models: %w", err)
+	}
+	m.touch(s)
+
+	models := make([]Model, len(payload.Models))
+	for i, md := range payload.Models {
+		models[i] = Model{
+			ID:             md.ID,
+			Provider:       md.Provider,
+			Name:           md.Name,
+			API:            md.API,
+			Reasoning:      md.Reasoning,
+			Input:          md.Input,
+			ContextWindow:  md.ContextWindow,
+			MaxTokens:      md.MaxTokens,
+			CostInput:      md.Cost.Input,
+			CostOutput:     md.Cost.Output,
+			CostCacheRead:  md.Cost.CacheRead,
+			CostCacheWrite: md.Cost.CacheWrite,
+		}
+	}
+	return models, nil
 }
 
 // Abort cancels the in-flight run, if any. Aborting an inactive session is a

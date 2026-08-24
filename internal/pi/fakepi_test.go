@@ -103,6 +103,33 @@ func (f *fakePi) handle(cmd map[string]any) {
 		f.respond(cmd, nil)
 	case "get_last_assistant_text":
 		f.respond(cmd, map[string]any{"text": "echo: " + f.lastPrompt})
+	case "get_available_models":
+		f.respond(cmd, map[string]any{
+			"models": []map[string]any{
+				{
+					"id":            "fake-model",
+					"provider":      "fake",
+					"name":          "Fake Model",
+					"api":           "anthropic-messages",
+					"reasoning":     true,
+					"input":         []string{"text", "image"},
+					"contextWindow": 200000,
+					"maxTokens":     64000,
+					"cost":          map[string]any{"input": 3.0, "output": 15.0, "cacheRead": 0.3, "cacheWrite": 3.75},
+				},
+				{
+					"id":            "fake-mini",
+					"provider":      "fake",
+					"name":          "Fake Mini",
+					"api":           "openai-responses",
+					"reasoning":     false,
+					"input":         []string{"text"},
+					"contextWindow": 128000,
+					"maxTokens":     32000,
+					"cost":          map[string]any{"input": 0.5, "output": 1.5, "cacheRead": 0.05, "cacheWrite": 0.0},
+				},
+			},
+		})
 	case "get_session_stats":
 		f.respond(cmd, map[string]any{
 			"tokens":       map[string]any{"input": 100, "output": 25, "cacheRead": 10, "cacheWrite": 5},

@@ -194,6 +194,55 @@ func TestReattachKnownSession(t *testing.T) {
 	}
 }
 
+func TestAvailableModels(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	models, err := m.AvailableModels(ctx, info.ID)
+	if err != nil {
+		t.Fatalf("AvailableModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %+v, want 2", models)
+	}
+	first := models[0]
+	if first.ID != "fake-model" || first.Provider != "fake" || first.Name != "Fake Model" {
+		t.Fatalf("first model = %+v", first)
+	}
+	if first.API != "anthropic-messages" || !first.Reasoning {
+		t.Fatalf("first model = %+v", first)
+	}
+	if len(first.Input) != 2 || first.Input[1] != "image" {
+		t.Fatalf("first model input = %v", first.Input)
+	}
+	if first.ContextWindow != 200000 || first.MaxTokens != 64000 {
+		t.Fatalf("first model limits = %+v", first)
+	}
+	if first.CostInput != 3.0 || first.CostOutput != 15.0 || first.CostCacheRead != 0.3 || first.CostCacheWrite != 3.75 {
+		t.Fatalf("first model cost = %+v", first)
+	}
+	if models[1].ID != "fake-mini" || models[1].Reasoning {
+		t.Fatalf("second model = %+v", models[1])
+	}
+
+	// Inactive sessions re-attach transparently, like GetSession.
+	if err := m.Delete(ctx, info.ID, false); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	models, err = m.AvailableModels(ctx, "known-models-1")
+	if err != nil {
+		t.Fatalf("AvailableModels after re-attach: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models after re-attach = %+v, want 2", models)
+	}
+}
+
 func TestSessionLimit(t *testing.T) {
 	t.Setenv("FAKE_PI", "1")
 	m := NewManager(testLogger(t), Config{Bin: "pi.test-fake", MaxSessions: 1})

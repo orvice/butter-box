@@ -47,6 +47,18 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatalf("stats = %+v", got.Msg.GetStats())
 	}
 
+	models, err := client.GetAvailableModels(ctx, connect.NewRequest(&piv1.GetAvailableModelsRequest{SessionId: id}))
+	if err != nil {
+		t.Fatalf("GetAvailableModels: %v", err)
+	}
+	if len(models.Msg.GetModels()) != 2 {
+		t.Fatalf("models = %+v, want 2", models.Msg.GetModels())
+	}
+	first := models.Msg.GetModels()[0]
+	if first.GetId() != "fake-model" || first.GetCost().GetOutput() != 15.0 {
+		t.Fatalf("first model = %+v", first)
+	}
+
 	sent, err := client.SendMessage(ctx, connect.NewRequest(&piv1.SendMessageRequest{
 		SessionId: id,
 		Message:   "hello over connect",

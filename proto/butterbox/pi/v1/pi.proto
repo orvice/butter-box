@@ -30,6 +30,11 @@ service PiService {
   // settles. The final message has type "agent_settled".
   rpc StreamMessage(StreamMessageRequest) returns (stream StreamMessageResponse);
 
+  // GetAvailableModels reports the models the session's pi process can use
+  // (as configured by pi's providers/auth on this box), re-attaching the
+  // session if it is not currently active.
+  rpc GetAvailableModels(GetAvailableModelsRequest) returns (GetAvailableModelsResponse);
+
   // AbortSession aborts the in-flight run, if any.
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);
 
@@ -95,6 +100,42 @@ message StreamMessageResponse {
   string type = 1;
   // Full pi event as JSON, passed through verbatim.
   string payload_json = 2;
+}
+
+message GetAvailableModelsRequest {
+  string session_id = 1;
+}
+
+message GetAvailableModelsResponse {
+  repeated Model models = 1;
+}
+
+message Model {
+  // Model ID as accepted by pi's --model flag and set_model (e.g.
+  // "claude-fable-5").
+  string id = 1;
+  // Provider ID (e.g. "anthropic").
+  string provider = 2;
+  // Human-readable model name.
+  string name = 3;
+  // Wire API the model speaks (e.g. "anthropic-messages",
+  // "openai-responses").
+  string api = 4;
+  // True when the model supports reasoning/thinking.
+  bool reasoning = 5;
+  // Supported input modalities: "text", "image".
+  repeated string input = 6;
+  int64 context_window = 7;
+  int64 max_tokens = 8;
+  // Cost in USD per million tokens.
+  ModelCost cost = 9;
+}
+
+message ModelCost {
+  double input = 1;
+  double output = 2;
+  double cache_read = 3;
+  double cache_write = 4;
 }
 
 message AbortSessionRequest {
