@@ -105,7 +105,7 @@ docker compose up -d
 - `PI_WEB_PASSWORD`: required when `PI_WEB_ENABLED` is set; enables pi-web's built-in HTTP Basic Auth (username is always `pi`)
 - `PI_WEB_PORT`: internal port pi-web listens on (loopback only), default `30141`
 - `PI_API_ENABLED`: expose the ConnectRPC [pi session API](#pi-api) at `/butterbox.pi.v1.PiService/`, default `false`
-- `PI_API_MAX_SESSIONS`: cap on concurrently active pi processes, default `8`
+- `PI_API_MAX_SESSIONS`: cap on concurrently active pi session processes, default `8` (the short-lived process behind a session-less `GetAvailableModels` is not counted)
 - `PI_API_IDLE_TIMEOUT`: stop a session process after this much inactivity (Go duration, session file is kept and re-attached on next use), default `30m`
 - `PI_BIN`: pi executable, default `pi`
 - `PI_SESSION_DIR`: override pi's session storage directory (passed as `--session-dir`)
@@ -132,7 +132,11 @@ Each session maps to a supervised `pi --mode rpc` child process speaking pi's JS
 
 `CreateSession` accepts an optional `cwd` — the working directory for the pi process, absolute or relative to `SANDBOX_ROOT`. It must resolve inside the sandbox root and exist, or the call fails with `invalid_argument`; empty keeps the server's own working directory. The effective directory is reported back on the `Session` message, and re-attached sessions are respawned in the session's recorded cwd (read back from pi's session file header when needed).
 
-RPCs: `CreateSession`, `ListSessions`, `GetSession`, `GetAvailableModels` (models the session's pi process can use, with provider, modalities, limits, and USD-per-million-token costs), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+RPCs: `CreateSession`, `ListSessions`, `GetSession`, `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+
+`GetAvailableModels` works with or without a session. With `session_id` set it asks that session's process (re-attaching it if idle), since a session's scoped model config may differ. With `session_id` empty it answers for the box: a short-lived `pi --mode rpc --no-session` process reads the catalog and is torn down, and the result is cached for five minutes so repeated dropdown loads cost one spawn. That transient process is outside the `PI_API_MAX_SESSIONS` accounting — it holds no session and lives for a single call — so a box at its session cap still answers catalog queries; if the transient process cannot start at all, the last known catalog is served rather than an error.
+
+`ListDirectories` lists the immediate subdirectories of one directory for a working-directory picker: `path` empty means `SANDBOX_ROOT`, anything else must resolve inside it (same rules as `cwd` and the MCP tools) and be an existing directory, or the call fails with `invalid_argument`. One level per call, no recursion and no file contents; dot-directories are skipped unless `include_hidden` is set, symlinked directories are never reported, and a listing over 500 entries comes back with `truncated: true`. Each entry's `path` is absolute, so it feeds straight back in as the next `ListDirectories` path or as `CreateSession.cwd`.
 
 For long runs prefer the async pair over `SendMessage`: `SubmitMessage` detaches the run from the request lifetime (a dropped connection never aborts it; `AbortSession` is the only way to cancel) and returns pi's entries cursor at submit time, which is stable across process restarts. `GetTurn` with `wait_seconds: 0` is a pure poll; `wait_seconds > 0` long-polls up to 30s. Completion is judged from the session entries after the cursor, so a box restart mid-run reports an honest "did not finish" (`running: false` with no `result`) instead of a stale previous answer. Submitting while a run is in flight returns the same busy error as `SendMessage`.
 
@@ -148,6 +152,15 @@ curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/SendMessage \
   -H 'Authorization: Bearer secret-token' \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"<id>","message":"What files are here?"}'
+
+# Populate a model dropdown and a cwd picker before any session exists.
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/GetAvailableModels \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' -d '{}'
+
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/ListDirectories \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' -d '{"path":""}'
 ```
 
 pi uses its own model credentials (`~/.pi/agent` auth or provider environment variables such as `ANTHROPIC_API_KEY`); make sure they are present in the container environment or persisted home volume.

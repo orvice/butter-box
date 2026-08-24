@@ -3,6 +3,7 @@ package pi
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -314,30 +315,37 @@ func newFakeManagerCfg(t *testing.T, cfg Config) *Manager {
 	return m
 }
 
+// spawnRecord is one fake pi launch, as recorded by recordSpawn.
+type spawnRecord struct {
+	Cwd  string   `json:"cwd"`
+	Args []string `json:"args"`
+}
+
 // spawnLogSetup points FAKE_PI_SPAWN_LOG at a fresh file and returns a reader
-// for the recorded spawn cwds, in spawn order.
-func spawnLogSetup(t *testing.T) func() []string {
+// for the recorded spawns, in spawn order.
+func spawnLogSetup(t *testing.T) func() []spawnRecord {
 	t.Helper()
 	logPath := filepath.Join(t.TempDir(), "spawns.jsonl")
 	t.Setenv("FAKE_PI_SPAWN_LOG", logPath)
-	return func() []string {
+	return func() []spawnRecord {
 		data, err := os.ReadFile(logPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // nothing spawned yet
+		}
 		if err != nil {
 			t.Fatalf("read spawn log: %v", err)
 		}
-		var cwds []string
+		var records []spawnRecord
 		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 			if line == "" {
 				continue
 			}
-			var rec struct {
-				Cwd string `json:"cwd"`
-			}
+			var rec spawnRecord
 			if err := json.Unmarshal([]byte(line), &rec); err != nil {
 				t.Fatalf("decode spawn record %q: %v", line, err)
 			}
-			cwds = append(cwds, rec.Cwd)
+			records = append(records, rec)
 		}
-		return cwds
+		return records
 	}
 }

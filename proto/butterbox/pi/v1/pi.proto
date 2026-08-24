@@ -41,10 +41,16 @@ service PiService {
   // the session entries past the cursor contain an assistant message.
   rpc GetTurn(GetTurnRequest) returns (GetTurnResponse);
 
-  // GetAvailableModels reports the models the session's pi process can use
-  // (as configured by pi's providers/auth on this box), re-attaching the
-  // session if it is not currently active.
+  // GetAvailableModels reports the models pi can use on this box (as
+  // configured by pi's providers/auth). With session_id set it asks that
+  // session's process, re-attaching it if it is not currently active; with
+  // session_id empty it answers for the box itself, no session required.
   rpc GetAvailableModels(GetAvailableModelsRequest) returns (GetAvailableModelsResponse);
+
+  // ListDirectories lists the immediate subdirectories of one directory
+  // inside the box's sandbox root — enough for a working-directory picker to
+  // walk down one level per call. Read-only: no file contents, no recursion.
+  rpc ListDirectories(ListDirectoriesRequest) returns (ListDirectoriesResponse);
 
   // AbortSession aborts the in-flight run, if any.
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);
@@ -159,6 +165,9 @@ message TurnResult {
 }
 
 message GetAvailableModelsRequest {
+  // Optional session whose pi process answers — its scoped model config may
+  // differ. Empty answers from the box: a short-lived pi process reads the
+  // catalog, and the result is cached for a few minutes.
   string session_id = 1;
 }
 
@@ -192,6 +201,33 @@ message ModelCost {
   double output = 2;
   double cache_read = 3;
   double cache_write = 4;
+}
+
+message ListDirectoriesRequest {
+  // Directory to list, absolute or relative to the box's sandbox root. Empty
+  // lists the sandbox root itself. Must resolve inside the sandbox root and
+  // be an existing directory.
+  string path = 1;
+  // Include entries whose name starts with "." (skipped by default).
+  bool include_hidden = 2;
+}
+
+message ListDirectoriesResponse {
+  // Absolute path of the listed directory.
+  string path = 1;
+  // Immediate subdirectories, sorted by name. Symlinked directories are not
+  // reported, so walking these listings never leaves the sandbox root.
+  repeated Directory directories = 2;
+  // True when the listing hit the server cap and is incomplete.
+  bool truncated = 3;
+}
+
+message Directory {
+  // Base name of the directory.
+  string name = 1;
+  // Absolute path, usable as CreateSession.cwd or a further ListDirectories
+  // path.
+  string path = 2;
 }
 
 message AbortSessionRequest {

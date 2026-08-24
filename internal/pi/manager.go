@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/orvice/butter-box/internal/sandbox"
 )
 
 // Sentinel errors the service layer maps to RPC codes.
@@ -22,6 +20,7 @@ var (
 	ErrNotFound        = errors.New("session not found")
 	ErrBadCursor       = errors.New("unknown turn cursor")
 	ErrInvalidCwd      = errors.New("invalid working directory")
+	ErrInvalidPath     = errors.New("invalid path")
 )
 
 const (
@@ -32,6 +31,10 @@ const (
 	// maxTurnWait caps GetTurn long-polling so no single request outlives
 	// typical proxy idle timeouts.
 	maxTurnWait = 30 * time.Second
+	// modelCatalogTTL bounds how long the session-less model catalog is served
+	// from cache: it only changes when the box's pi config changes, so
+	// repeated dropdown loads must not spawn a process each time.
+	modelCatalogTTL = 5 * time.Minute
 )
 
 // Config configures the session manager.
@@ -153,6 +156,12 @@ type Manager struct {
 	cwds     map[string]string        // session ID -> cwd, survives idle-stop
 	stopped  bool
 
+	// Session-less model catalog, guarded by mu; catalogGate (capacity 1)
+	// serializes the transient spawns that fill it.
+	catalog     []Model
+	catalogAt   time.Time
+	catalogGate chan struct{}
+
 	janitorStop chan struct{}
 }
 
@@ -163,6 +172,7 @@ func NewManager(logger *slog.Logger, cfg Config) *Manager {
 		sessions:    map[string]*session{},
 		inflight:    map[string]chan struct{}{},
 		cwds:        map[string]string{},
+		catalogGate: make(chan struct{}, 1),
 		janitorStop: make(chan struct{}),
 	}
 	go m.janitor()
@@ -274,16 +284,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 // resolveCwd validates a caller-supplied working directory: it must resolve
 // inside the sandbox root (same rules as the MCP tools) and exist.
 func (m *Manager) resolveCwd(userPath string) (string, error) {
-	if m.cfg.SandboxRoot == "" {
-		return "", fmt.Errorf("%w: no sandbox root configured", ErrInvalidCwd)
-	}
-	resolved, err := sandbox.Resolve(m.cfg.SandboxRoot, userPath)
+	resolved, err := m.resolveDir(userPath)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidCwd, err)
-	}
-	fi, err := os.Stat(resolved)
-	if err != nil || !fi.IsDir() {
-		return "", fmt.Errorf("%w: %q is not an existing directory", ErrInvalidCwd, resolved)
 	}
 	return resolved, nil
 }
@@ -633,14 +636,107 @@ func (m *Manager) waitSettled(ctx context.Context, proc *process, sub *subscript
 	}
 }
 
-// AvailableModels reports the models the session's pi process can use,
-// re-attaching the session if needed.
+// AvailableModels reports the models pi can use. With an id it asks that
+// session's process, re-attaching it if needed; with an empty id it answers
+// for the box as a whole, without a session.
 func (m *Manager) AvailableModels(ctx context.Context, id string) ([]Model, error) {
+	if id == "" {
+		return m.boxModels(ctx)
+	}
 	s, err := m.attach(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	data, err := s.proc.callOK(ctx, map[string]any{"type": "get_available_models"})
+	models, err := getAvailableModels(ctx, s.proc)
+	if err != nil {
+		return nil, err
+	}
+	m.touch(s)
+	return models, nil
+}
+
+// boxModels answers a session-less catalog query: from cache while it is
+// fresh, otherwise from one transient pi process. Concurrent callers are
+// collapsed, so a burst of dropdown loads costs a single spawn.
+func (m *Manager) boxModels(ctx context.Context) ([]Model, error) {
+	if models, ok := m.cachedModels(); ok {
+		return models, nil
+	}
+
+	select {
+	case m.catalogGate <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-m.catalogGate }()
+
+	// A queued caller inherits whatever the winner just fetched.
+	if models, ok := m.cachedModels(); ok {
+		return models, nil
+	}
+
+	models, err := m.fetchBoxModels(ctx)
+	if err != nil {
+		// The catalog is near-static, so a stale answer beats no answer when
+		// the transient process cannot run (pi misconfigured, box out of
+		// resources) — a picker keeps working off the last known catalog.
+		if stale := m.staleModels(); stale != nil {
+			m.logger.Warn("serving stale pi model catalog", slog.Any("error", err))
+			return stale, nil
+		}
+		return nil, err
+	}
+
+	m.mu.Lock()
+	m.catalog = models
+	m.catalogAt = time.Now()
+	m.mu.Unlock()
+	return models, nil
+}
+
+// fetchBoxModels spawns an ephemeral `pi --mode rpc --no-session`, reads the
+// catalog, and tears the process down. It deliberately bypasses the
+// MaxSessions accounting: the process holds no session, lives for one call,
+// and a box at its session cap must still be able to answer a catalog query.
+func (m *Manager) fetchBoxModels(ctx context.Context) ([]Model, error) {
+	m.mu.Lock()
+	stopped := m.stopped
+	m.mu.Unlock()
+	if stopped {
+		return nil, errors.New("manager stopped")
+	}
+
+	proc, err := startProcess(m.logger, m.cfg.Bin, []string{"--mode", "rpc", "--no-session"}, "")
+	if err != nil {
+		return nil, err
+	}
+	defer proc.stop()
+
+	callCtx, cancel := context.WithTimeout(ctx, defaultSetupTimeout)
+	defer cancel()
+	return getAvailableModels(callCtx, proc)
+}
+
+// cachedModels returns the cached catalog while it is within its TTL.
+func (m *Manager) cachedModels() ([]Model, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.catalog == nil || time.Since(m.catalogAt) > modelCatalogTTL {
+		return nil, false
+	}
+	return m.catalog, true
+}
+
+// staleModels returns the cached catalog regardless of its age, nil when
+// nothing was ever cached.
+func (m *Manager) staleModels() []Model {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.catalog
+}
+
+func getAvailableModels(ctx context.Context, proc *process) ([]Model, error) {
+	data, err := proc.callOK(ctx, map[string]any{"type": "get_available_models"})
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +746,6 @@ func (m *Manager) AvailableModels(ctx context.Context, id string) ([]Model, erro
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("decode get_available_models: %w", err)
 	}
-	m.touch(s)
 
 	models := make([]Model, len(payload.Models))
 	for i, md := range payload.Models {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -372,6 +373,106 @@ func TestAvailableModels(t *testing.T) {
 	}
 }
 
+func TestBoxAvailableModels(t *testing.T) {
+	readSpawns := spawnLogSetup(t)
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4})
+	ctx := testCtx(t)
+
+	models, err := m.AvailableModels(ctx, "")
+	if err != nil {
+		t.Fatalf("AvailableModels(session-less): %v", err)
+	}
+	if len(models) != 2 || models[0].ID != "fake-model" {
+		t.Fatalf("models = %+v, want the 2-model catalog", models)
+	}
+
+	// One transient, session-less process answered the query.
+	spawns := readSpawns()
+	if len(spawns) != 1 {
+		t.Fatalf("spawns = %+v, want 1", spawns)
+	}
+	if !slices.Contains(spawns[0].Args, "--no-session") {
+		t.Fatalf("spawn args = %v, want --no-session", spawns[0].Args)
+	}
+
+	// The catalog is cached, so a repeated query spawns nothing.
+	if _, err := m.AvailableModels(ctx, ""); err != nil {
+		t.Fatalf("AvailableModels(cached): %v", err)
+	}
+	if spawns := readSpawns(); len(spawns) != 1 {
+		t.Fatalf("spawns after cached query = %+v, want 1", spawns)
+	}
+
+	// An expired catalog is fetched again.
+	m.mu.Lock()
+	m.catalogAt = time.Now().Add(-2 * modelCatalogTTL)
+	m.mu.Unlock()
+	if _, err := m.AvailableModels(ctx, ""); err != nil {
+		t.Fatalf("AvailableModels(expired): %v", err)
+	}
+	if spawns := readSpawns(); len(spawns) != 2 {
+		t.Fatalf("spawns after expiry = %+v, want 2", spawns)
+	}
+}
+
+// TestBoxAvailableModelsAtSessionLimit covers the capacity case: the transient
+// catalog process is outside the MaxSessions accounting, so a box at its
+// session cap still answers.
+func TestBoxAvailableModelsAtSessionLimit(t *testing.T) {
+	m := newFakeManagerCfg(t, Config{MaxSessions: 1})
+	ctx := testCtx(t)
+
+	if _, err := m.Create(ctx, CreateOpts{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := m.Create(ctx, CreateOpts{}); !errors.Is(err, ErrTooManySessions) {
+		t.Fatalf("Create over limit = %v, want ErrTooManySessions", err)
+	}
+
+	models, err := m.AvailableModels(ctx, "")
+	if err != nil {
+		t.Fatalf("AvailableModels at session limit: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %+v, want 2", models)
+	}
+}
+
+// TestBoxAvailableModelsServesStale covers a failing spawn: the catalog barely
+// changes, so the last known answer beats no answer at all.
+func TestBoxAvailableModelsServesStale(t *testing.T) {
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4})
+	ctx := testCtx(t)
+
+	if _, err := m.AvailableModels(ctx, ""); err != nil {
+		t.Fatalf("AvailableModels: %v", err)
+	}
+
+	// Age out the cache and break the pi binary: the stale catalog answers.
+	m.mu.Lock()
+	m.catalogAt = time.Now().Add(-2 * modelCatalogTTL)
+	m.mu.Unlock()
+	m.cfg.Bin = filepath.Join(t.TempDir(), "no-such-pi")
+
+	models, err := m.AvailableModels(ctx, "")
+	if err != nil {
+		t.Fatalf("AvailableModels with broken pi = %v, want the stale catalog", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("stale models = %+v, want 2", models)
+	}
+}
+
+func TestBoxAvailableModelsError(t *testing.T) {
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4})
+	m.cfg.Bin = filepath.Join(t.TempDir(), "no-such-pi")
+
+	// Nothing cached and no process to ask: the error must surface.
+	if _, err := m.AvailableModels(testCtx(t), ""); err == nil {
+		t.Fatal("AvailableModels with broken pi and empty cache succeeded, want error")
+	}
+}
+
 // sameDir compares paths after resolving symlinks (macOS tempdirs live under
 // /var -> /private/var, so the child's os.Getwd differs textually).
 func sameDir(t *testing.T, got, want string) {
@@ -409,7 +510,7 @@ func TestCreateSpawnsInRequestedCwd(t *testing.T) {
 	if len(spawns) != 1 {
 		t.Fatalf("spawns = %v, want 1", spawns)
 	}
-	sameDir(t, spawns[0], proj)
+	sameDir(t, spawns[0].Cwd, proj)
 }
 
 func TestCreateCwdValidation(t *testing.T) {
@@ -466,7 +567,7 @@ func TestReattachSpawnsInSessionCwd(t *testing.T) {
 	if len(spawns) != 1 {
 		t.Fatalf("spawns = %v, want 1", spawns)
 	}
-	sameDir(t, spawns[0], workDir)
+	sameDir(t, spawns[0].Cwd, workDir)
 }
 
 func TestFindSessionCwd(t *testing.T) {
