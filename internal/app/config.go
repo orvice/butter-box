@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -23,12 +24,23 @@ type Config struct {
 	Stateless    bool
 	JSONResponse bool
 	PiWeb        PiWebConfig
+	PiAPI        PiAPIConfig
 }
 
 type PiWebConfig struct {
 	Enabled  bool
 	Port     int
 	Password string
+}
+
+// PiAPIConfig configures the ConnectRPC pi session API. Requests authenticate
+// with the same bearer token as the MCP endpoint.
+type PiAPIConfig struct {
+	Enabled     bool
+	Bin         string
+	MaxSessions int
+	IdleTimeout time.Duration
+	SessionDir  string
 }
 
 func LoadConfig() (*Config, error) {
@@ -48,6 +60,11 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	piAPI, err := loadPiAPIConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		Addr:         getenvDefault("MCP_ADDR", defaultAddr),
 		Token:        os.Getenv("MCP_AUTH_TOKEN"),
@@ -57,7 +74,34 @@ func LoadConfig() (*Config, error) {
 		Stateless:    envBool("MCP_STATELESS", false),
 		JSONResponse: envBool("MCP_JSON_RESPONSE", false),
 		PiWeb:        piWeb,
+		PiAPI:        piAPI,
 	}, nil
+}
+
+func loadPiAPIConfig() (PiAPIConfig, error) {
+	cfg := PiAPIConfig{
+		Enabled:    envBool("PI_API_ENABLED", false),
+		Bin:        getenvDefault("PI_BIN", "pi"),
+		SessionDir: strings.TrimSpace(os.Getenv("PI_SESSION_DIR")),
+	}
+	if !cfg.Enabled {
+		return cfg, nil
+	}
+
+	maxSessions := getenvDefault("PI_API_MAX_SESSIONS", "8")
+	parsed, err := strconv.Atoi(maxSessions)
+	if err != nil || parsed <= 0 {
+		return cfg, fmt.Errorf("PI_API_MAX_SESSIONS must be a positive integer, got %q", maxSessions)
+	}
+	cfg.MaxSessions = parsed
+
+	idle := getenvDefault("PI_API_IDLE_TIMEOUT", "30m")
+	timeout, err := time.ParseDuration(idle)
+	if err != nil || timeout <= 0 {
+		return cfg, fmt.Errorf("PI_API_IDLE_TIMEOUT must be a positive duration, got %q", idle)
+	}
+	cfg.IdleTimeout = timeout
+	return cfg, nil
 }
 
 func loadPiWebConfig() (PiWebConfig, error) {

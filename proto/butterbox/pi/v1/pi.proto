@@ -1,0 +1,144 @@
+syntax = "proto3";
+
+package butterbox.pi.v1;
+
+option go_package = "github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1;piv1";
+
+// PiService drives pi coding-agent sessions hosted on this ButterBox.
+//
+// A session maps 1:1 to a `pi --mode rpc` child process while active. Session
+// IDs are pi's own session IDs; session data lives in pi's session directory
+// (~/.pi/agent), so an inactive session can be re-attached transparently and
+// every session is visible in pi-web.
+service PiService {
+  // CreateSession spawns a new pi session process.
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+
+  // ListSessions reports sessions currently held by this server (active
+  // processes only; historical sessions live in pi's session directory).
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
+  // GetSession reports state and usage statistics for one session,
+  // re-attaching it if it is not currently active.
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+
+  // SendMessage sends one prompt and returns after the run fully settles
+  // (pi's agent_settled: no pending retry, compaction, or queued follow-up).
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+
+  // StreamMessage sends one prompt and streams raw pi events until the run
+  // settles. The final message has type "agent_settled".
+  rpc StreamMessage(StreamMessageRequest) returns (stream StreamMessageResponse);
+
+  // AbortSession aborts the in-flight run, if any.
+  rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);
+
+  // DeleteSession stops the session process. The session file on disk is
+  // kept unless purge is set.
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+}
+
+message CreateSessionRequest {
+  // Optional display name (pi session name, shown in pi-web listings).
+  string name = 1;
+  // Optional model provider (e.g. "anthropic"). Empty uses pi's default.
+  string provider = 2;
+  // Optional model pattern or ID as accepted by pi's --model flag.
+  string model = 3;
+  // Optional thinking level: off, minimal, low, medium, high, xhigh, max.
+  string thinking_level = 4;
+}
+
+message CreateSessionResponse {
+  Session session = 1;
+}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message GetSessionResponse {
+  Session session = 1;
+  SessionStats stats = 2;
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string message = 2;
+  repeated ImageContent images = 3;
+}
+
+message SendMessageResponse {
+  // Text of the last assistant message after the run settled.
+  string text = 1;
+  // Stop reason of the last assistant message: stop, length, toolUse,
+  // error, aborted. Empty when no assistant message was produced.
+  string stop_reason = 2;
+  // Cumulative session statistics after the run.
+  SessionStats stats = 3;
+}
+
+message StreamMessageRequest {
+  string session_id = 1;
+  string message = 2;
+  repeated ImageContent images = 3;
+}
+
+message StreamMessageResponse {
+  // pi event type (message_update, tool_execution_start, agent_settled, ...).
+  string type = 1;
+  // Full pi event as JSON, passed through verbatim.
+  string payload_json = 2;
+}
+
+message AbortSessionRequest {
+  string session_id = 1;
+}
+
+message AbortSessionResponse {}
+
+message DeleteSessionRequest {
+  string session_id = 1;
+  // Also delete the session file from pi's session directory.
+  bool purge = 2;
+}
+
+message DeleteSessionResponse {}
+
+message Session {
+  // pi's session ID.
+  string id = 1;
+  // Display name, if set.
+  string name = 2;
+  // Absolute path of the session JSONL file ("" for ephemeral sessions).
+  string session_file = 3;
+  // Selected model as "provider/id" ("" when pi reports none).
+  string model = 4;
+  // True while a run is in flight.
+  bool streaming = 5;
+  int32 message_count = 6;
+}
+
+message SessionStats {
+  int64 input_tokens = 1;
+  int64 output_tokens = 2;
+  int64 cache_read_tokens = 3;
+  int64 cache_write_tokens = 4;
+  // Total session cost in USD.
+  double cost = 5;
+  // Current context window usage percentage (0 when unknown).
+  int32 context_percent = 6;
+}
+
+message ImageContent {
+  // e.g. "image/png".
+  string mime_type = 1;
+  // Raw image bytes.
+  bytes data = 2;
+}

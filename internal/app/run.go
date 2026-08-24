@@ -8,6 +8,9 @@ import (
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/orvice/butter-box/internal/pi"
+	"github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1/piv1connect"
 )
 
 func Run(ctx context.Context, logger *slog.Logger) error {
@@ -37,6 +40,18 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		StartPiWebProcess(ctx, logger, cfg.PiWeb)
 	}
 
+	if cfg.PiAPI.Enabled {
+		manager := pi.NewManager(logger, pi.Config{
+			Bin:         cfg.PiAPI.Bin,
+			MaxSessions: cfg.PiAPI.MaxSessions,
+			IdleTimeout: cfg.PiAPI.IdleTimeout,
+			SessionDir:  cfg.PiAPI.SessionDir,
+		})
+		defer manager.Stop()
+		path, handler := piv1connect.NewPiServiceHandler(pi.NewService(manager))
+		mux.Handle(path, WithBearerAuth(handler, cfg.Token))
+	}
+
 	httpServer := &http.Server{
 		Addr:    cfg.Addr,
 		Handler: mux,
@@ -50,6 +65,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		slog.Bool("stateless", cfg.Stateless),
 		slog.Bool("json_response", cfg.JSONResponse),
 		slog.Bool("pi_web_enabled", cfg.PiWeb.Enabled),
+		slog.Bool("pi_api_enabled", cfg.PiAPI.Enabled),
 	)
 
 	errCh := make(chan error, 1)
