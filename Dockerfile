@@ -55,6 +55,7 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 
 # Node.js CLIs, installed system-wide
 RUN npm install -g \
+		@agegr/pi-web \
 		@doist/todoist-cli \
 		@earendil-works/pi-coding-agent \
 		@googleworkspace/cli \
