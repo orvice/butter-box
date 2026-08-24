@@ -32,11 +32,31 @@ func NewPiWebHandler(cfg PiWebConfig) http.Handler {
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.SetXForwarded()
+			rewriteSameOriginHeader(pr, target)
 		},
 		// Flush immediately: the UI streams agent output over long-lived
 		// responses.
 		FlushInterval: -1,
 	}
+}
+
+// rewriteSameOriginHeader keeps pi-web's CSRF origin check working behind
+// the proxy. pi-web requires the Origin header to equal the origin it
+// derives from its own Host header, which the proxy rewrites to the
+// loopback target — so a browser Origin naming the external host would be
+// rejected as untrusted. Origins matching the inbound Host are rewritten to
+// the target origin; genuinely cross-site Origins pass through unchanged so
+// pi-web still rejects them.
+func rewriteSameOriginHeader(pr *httputil.ProxyRequest, target *url.URL) {
+	origin := pr.In.Header.Get("Origin")
+	if origin == "" || origin == "null" {
+		return
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host != pr.In.Host {
+		return
+	}
+	pr.Out.Header.Set("Origin", target.Scheme+"://"+target.Host)
 }
 
 // StartPiWebProcess launches pi-web as a supervised child process that
