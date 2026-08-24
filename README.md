@@ -104,6 +104,11 @@ docker compose up -d
 - `PI_WEB_ENABLED`: run [pi-web](https://github.com/agegr/pi-web) as a supervised child process and reverse-proxy it, default `false`
 - `PI_WEB_PASSWORD`: required when `PI_WEB_ENABLED` is set; enables pi-web's built-in HTTP Basic Auth (username is always `pi`)
 - `PI_WEB_PORT`: internal port pi-web listens on (loopback only), default `30141`
+- `PI_API_ENABLED`: expose the ConnectRPC [pi session API](#pi-api) at `/butterbox.pi.v1.PiService/`, default `false`
+- `PI_API_MAX_SESSIONS`: cap on concurrently active pi processes, default `8`
+- `PI_API_IDLE_TIMEOUT`: stop a session process after this much inactivity (Go duration, session file is kept and re-attached on next use), default `30m`
+- `PI_BIN`: pi executable, default `pi`
+- `PI_SESSION_DIR`: override pi's session storage directory (passed as `--session-dir`)
 
 ## Pi Web
 
@@ -118,6 +123,32 @@ docker run --rm -p 8080:8080 \
 ```
 
 Then open `http://127.0.0.1:8080/` and log in with username `pi` and the configured password. Do not expose it over plain HTTP to the internet — terminate TLS in front of it.
+
+## Pi API
+
+When `PI_API_ENABLED=true`, ButterBox exposes the [pi coding agent](https://github.com/earendil-works/pi) as an agent runtime over ConnectRPC. The service is defined in [`proto/butterbox/pi/v1/pi.proto`](proto/butterbox/pi/v1/pi.proto) and mounted at `/butterbox.pi.v1.PiService/`, protected by the same `MCP_AUTH_TOKEN` bearer auth as the MCP endpoint.
+
+Each session maps to a supervised `pi --mode rpc` child process speaking pi's JSONL RPC protocol. Session IDs are pi's own session IDs and session data lives in pi's session directory, so idle sessions are stopped and transparently re-attached on next use — and every API-driven session shows up in pi-web when that is enabled too. Extension UI dialogs are auto-cancelled so a headless run can never wedge.
+
+RPCs: `CreateSession`, `ListSessions`, `GetSession`, `SendMessage` (unary, returns after the run fully settles), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+
+ConnectRPC speaks plain JSON over HTTP POST, so curl works:
+
+```bash
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/CreateSession \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"my-task","provider":"anthropic"}'
+
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/SendMessage \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<id>","message":"What files are here?"}'
+```
+
+pi uses its own model credentials (`~/.pi/agent` auth or provider environment variables such as `ANTHROPIC_API_KEY`); make sure they are present in the container environment or persisted home volume.
+
+Regenerate the ConnectRPC code after editing the proto with `buf generate` (config in `buf.gen.yaml`, lint with `buf lint`).
 
 ## MCP Server JSON Example
 

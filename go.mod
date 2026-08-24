@@ -2,7 +2,11 @@ module github.com/orvice/butter-box
 
 go 1.26.5
 
-require github.com/modelcontextprotocol/go-sdk v1.7.0
+require (
+	connectrpc.com/connect v1.18.1
+	github.com/modelcontextprotocol/go-sdk v1.7.0
+	google.golang.org/protobuf v1.36.11
+)
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
