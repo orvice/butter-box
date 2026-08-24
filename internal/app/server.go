@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/orvice/butter-box/internal/sandbox"
 )
 
 const (
@@ -169,26 +171,7 @@ func NewMCPServer(cfg *Config) *mcp.Server {
 }
 
 func resolveSandboxPath(root, userPath string) (string, error) {
-	if strings.TrimSpace(userPath) == "" {
-		return "", errors.New("path is required")
-	}
-
-	var candidate string
-	if filepath.IsAbs(userPath) {
-		candidate = filepath.Clean(userPath)
-	} else {
-		candidate = filepath.Join(root, userPath)
-	}
-
-	candidate = filepath.Clean(candidate)
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes workspace root %q", userPath, root)
-	}
-	return candidate, nil
+	return sandbox.Resolve(root, userPath)
 }
 
 func textResult(text string) *mcp.CallToolResult {

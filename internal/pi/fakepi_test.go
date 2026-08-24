@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -75,6 +76,8 @@ func (f *fakePi) entriesSince(since any) ([]map[string]any, any, bool) {
 }
 
 func fakePiMain() {
+	recordSpawn()
+
 	f := &fakePi{
 		out:       bufio.NewWriter(os.Stdout),
 		sessionID: fakeSessionID,
@@ -274,11 +277,67 @@ func (f *fakePi) run(prompt string) {
 	f.emit(map[string]any{"type": "agent_settled"})
 }
 
+// recordSpawn appends the fake's working directory and argv to the file named
+// by FAKE_PI_SPAWN_LOG, so tests can assert the spawn directory.
+func recordSpawn() {
+	logPath := os.Getenv("FAKE_PI_SPAWN_LOG")
+	if logPath == "" {
+		return
+	}
+	cwd, _ := os.Getwd()
+	rec, err := json.Marshal(map[string]any{"cwd": cwd, "args": os.Args[1:]})
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(rec, '\n'))
+}
+
 // newFakeManager returns a Manager that spawns this test binary as pi.
 func newFakeManager(t *testing.T) *Manager {
 	t.Helper()
+	return newFakeManagerCfg(t, Config{MaxSessions: 4})
+}
+
+// newFakeManagerCfg is newFakeManager with caller-controlled Config; Bin is
+// always this test binary.
+func newFakeManagerCfg(t *testing.T, cfg Config) *Manager {
+	t.Helper()
 	t.Setenv("FAKE_PI", "1")
-	m := NewManager(testLogger(t), Config{Bin: os.Args[0], MaxSessions: 4})
+	cfg.Bin = os.Args[0]
+	m := NewManager(testLogger(t), cfg)
 	t.Cleanup(m.Stop)
 	return m
+}
+
+// spawnLogSetup points FAKE_PI_SPAWN_LOG at a fresh file and returns a reader
+// for the recorded spawn cwds, in spawn order.
+func spawnLogSetup(t *testing.T) func() []string {
+	t.Helper()
+	logPath := filepath.Join(t.TempDir(), "spawns.jsonl")
+	t.Setenv("FAKE_PI_SPAWN_LOG", logPath)
+	return func() []string {
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read spawn log: %v", err)
+		}
+		var cwds []string
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if line == "" {
+				continue
+			}
+			var rec struct {
+				Cwd string `json:"cwd"`
+			}
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("decode spawn record %q: %v", line, err)
+			}
+			cwds = append(cwds, rec.Cwd)
+		}
+		return cwds
+	}
 }

@@ -26,6 +26,7 @@ func (s *Service) CreateSession(ctx context.Context, req *connect.Request[piv1.C
 		Provider:      req.Msg.GetProvider(),
 		Model:         req.Msg.GetModel(),
 		ThinkingLevel: req.Msg.GetThinkingLevel(),
+		Cwd:           req.Msg.GetCwd(),
 	})
 	if err != nil {
 		return nil, rpcError(err)
@@ -155,7 +156,7 @@ func rpcError(err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, ErrTooManySessions):
 		return connect.NewError(connect.CodeResourceExhausted, err)
-	case errors.Is(err, ErrBadCursor):
+	case errors.Is(err, ErrBadCursor), errors.Is(err, ErrInvalidCwd):
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, context.Canceled):
 		return connect.NewError(connect.CodeCanceled, err)
@@ -178,6 +179,7 @@ func sessionProto(info Info) *piv1.Session {
 		Model:        info.Model,
 		Streaming:    info.Streaming,
 		MessageCount: info.MessageCount,
+		Cwd:          info.Cwd,
 	}
 }
 
