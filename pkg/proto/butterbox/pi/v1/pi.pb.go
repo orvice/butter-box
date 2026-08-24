@@ -31,6 +31,10 @@ type CreateSessionRequest struct {
 	Model string `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	// Optional thinking level: off, minimal, low, medium, high, xhigh, max.
 	ThinkingLevel string `protobuf:"bytes,4,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
+	// Optional working directory for the session's pi process, absolute or
+	// relative to the box's sandbox root. Must resolve inside the sandbox root
+	// and exist. Empty keeps the server process working directory.
+	Cwd           string `protobuf:"bytes,5,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -89,6 +93,13 @@ func (x *CreateSessionRequest) GetModel() string {
 func (x *CreateSessionRequest) GetThinkingLevel() string {
 	if x != nil {
 		return x.ThinkingLevel
+	}
+	return ""
+}
+
+func (x *CreateSessionRequest) GetCwd() string {
+	if x != nil {
+		return x.Cwd
 	}
 	return ""
 }
@@ -1294,8 +1305,10 @@ type Session struct {
 	// Selected model as "provider/id" ("" when pi reports none).
 	Model string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
 	// True while a run is in flight.
-	Streaming     bool  `protobuf:"varint,5,opt,name=streaming,proto3" json:"streaming,omitempty"`
-	MessageCount  int32 `protobuf:"varint,6,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
+	Streaming    bool  `protobuf:"varint,5,opt,name=streaming,proto3" json:"streaming,omitempty"`
+	MessageCount int32 `protobuf:"varint,6,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
+	// Effective working directory of the session process ("" when unknown).
+	Cwd           string `protobuf:"bytes,7,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1370,6 +1383,13 @@ func (x *Session) GetMessageCount() int32 {
 		return x.MessageCount
 	}
 	return 0
+}
+
+func (x *Session) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
 }
 
 type SessionStats struct {
@@ -1516,12 +1536,13 @@ var File_butterbox_pi_v1_pi_proto protoreflect.FileDescriptor
 
 const file_butterbox_pi_v1_pi_proto_rawDesc = "" +
 	"\n" +
-	"\x18butterbox/pi/v1/pi.proto\x12\x0fbutterbox.pi.v1\"\x83\x01\n" +
+	"\x18butterbox/pi/v1/pi.proto\x12\x0fbutterbox.pi.v1\"\x95\x01\n" +
 	"\x14CreateSessionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12%\n" +
-	"\x0ethinking_level\x18\x04 \x01(\tR\rthinkingLevel\"K\n" +
+	"\x0ethinking_level\x18\x04 \x01(\tR\rthinkingLevel\x12\x10\n" +
+	"\x03cwd\x18\x05 \x01(\tR\x03cwd\"K\n" +
 	"\x15CreateSessionResponse\x122\n" +
 	"\asession\x18\x01 \x01(\v2\x18.butterbox.pi.v1.SessionR\asession\"\x15\n" +
 	"\x13ListSessionsRequest\"L\n" +
@@ -1605,14 +1626,15 @@ const file_butterbox_pi_v1_pi_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
 	"\x05purge\x18\x02 \x01(\bR\x05purge\"\x17\n" +
-	"\x15DeleteSessionResponse\"\xa9\x01\n" +
+	"\x15DeleteSessionResponse\"\xbb\x01\n" +
 	"\aSession\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
 	"\fsession_file\x18\x03 \x01(\tR\vsessionFile\x12\x14\n" +
 	"\x05model\x18\x04 \x01(\tR\x05model\x12\x1c\n" +
 	"\tstreaming\x18\x05 \x01(\bR\tstreaming\x12#\n" +
-	"\rmessage_count\x18\x06 \x01(\x05R\fmessageCount\"\xed\x01\n" +
+	"\rmessage_count\x18\x06 \x01(\x05R\fmessageCount\x12\x10\n" +
+	"\x03cwd\x18\a \x01(\tR\x03cwd\"\xed\x01\n" +
 	"\fSessionStats\x12!\n" +
 	"\finput_tokens\x18\x01 \x01(\x03R\vinputTokens\x12#\n" +
 	"\routput_tokens\x18\x02 \x01(\x03R\foutputTokens\x12*\n" +

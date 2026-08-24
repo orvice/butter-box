@@ -39,8 +39,11 @@ type process struct {
 	exitErr error
 }
 
-func startProcess(logger *slog.Logger, bin string, args []string) (*process, error) {
+// startProcess spawns the pi child. dir, when non-empty, becomes the child's
+// working directory.
+func startProcess(logger *slog.Logger, bin string, args []string, dir string) (*process, error) {
 	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	cmd.Stderr = os.Stderr
 

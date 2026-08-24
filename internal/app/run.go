@@ -46,6 +46,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 			MaxSessions: cfg.PiAPI.MaxSessions,
 			IdleTimeout: cfg.PiAPI.IdleTimeout,
 			SessionDir:  cfg.PiAPI.SessionDir,
+			SandboxRoot: cfg.Root,
 		})
 		defer manager.Stop()
 		path, handler := piv1connect.NewPiServiceHandler(pi.NewService(manager))

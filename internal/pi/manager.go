@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orvice/butter-box/internal/sandbox"
 )
 
 // Sentinel errors the service layer maps to RPC codes.
@@ -18,6 +21,7 @@ var (
 	ErrTooManySessions = errors.New("active session limit reached")
 	ErrNotFound        = errors.New("session not found")
 	ErrBadCursor       = errors.New("unknown turn cursor")
+	ErrInvalidCwd      = errors.New("invalid working directory")
 )
 
 const (
@@ -41,6 +45,9 @@ type Config struct {
 	IdleTimeout time.Duration
 	// SessionDir overrides pi's session storage directory when set.
 	SessionDir string
+	// SandboxRoot bounds caller-supplied session working directories, using
+	// the same rules as the MCP tools. Empty rejects every cwd request.
+	SandboxRoot string
 }
 
 func (c Config) withDefaults() Config {
@@ -62,6 +69,9 @@ type CreateOpts struct {
 	Provider      string
 	Model         string
 	ThinkingLevel string
+	// Cwd is the working directory for the pi process, absolute or relative
+	// to the sandbox root. Empty keeps the server process working directory.
+	Cwd string
 }
 
 // Info is a session state snapshot.
@@ -72,6 +82,7 @@ type Info struct {
 	Model        string
 	Streaming    bool
 	MessageCount int32
+	Cwd          string
 }
 
 // Stats is a cumulative session usage snapshot.
@@ -111,6 +122,7 @@ type SendResult struct {
 type session struct {
 	id       string
 	file     string
+	cwd      string
 	proc     *process
 	runSlot  chan struct{} // capacity 1: holding the token = running a prompt
 	turn     *turnState    // guarded by Manager.mu; non-nil while a submitted run is in flight
@@ -138,6 +150,7 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	inflight map[string]chan struct{} // attach singleflight, keyed by session ID
+	cwds     map[string]string        // session ID -> cwd, survives idle-stop
 	stopped  bool
 
 	janitorStop chan struct{}
@@ -149,6 +162,7 @@ func NewManager(logger *slog.Logger, cfg Config) *Manager {
 		logger:      logger,
 		sessions:    map[string]*session{},
 		inflight:    map[string]chan struct{}{},
+		cwds:        map[string]string{},
 		janitorStop: make(chan struct{}),
 	}
 	go m.janitor()
@@ -173,6 +187,20 @@ func (m *Manager) Stop() {
 
 // Create spawns a fresh pi session.
 func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
+	spawnDir := ""
+	if opts.Cwd != "" {
+		var err error
+		spawnDir, err = m.resolveCwd(opts.Cwd)
+		if err != nil {
+			return Info{}, err
+		}
+	}
+	cwd := spawnDir
+	if cwd == "" {
+		// Report the effective directory even when the caller left it default.
+		cwd, _ = os.Getwd()
+	}
+
 	args := []string{"--mode", "rpc"}
 	if opts.Name != "" {
 		args = append(args, "--name", opts.Name)
@@ -185,7 +213,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 	}
 	args = m.appendSessionDir(args)
 
-	proc, err := m.spawn(args)
+	proc, err := m.spawn(args, spawnDir)
 	if err != nil {
 		return Info{}, err
 	}
@@ -213,6 +241,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 	s := &session{
 		id:       state.SessionID,
 		file:     state.SessionFile,
+		cwd:      cwd,
 		proc:     proc,
 		runSlot:  make(chan struct{}, 1),
 		lastUsed: time.Now(),
@@ -231,13 +260,32 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 		return Info{}, fmt.Errorf("session %s already exists", s.id)
 	}
 	m.sessions[s.id] = s
+	m.cwds[s.id] = cwd
 	m.mu.Unlock()
 
 	m.logger.Info("pi session created",
 		slog.String("session_id", s.id),
 		slog.String("session_file", s.file),
+		slog.String("cwd", cwd),
 	)
-	return infoFromState(state), nil
+	return infoWithCwd(state, cwd), nil
+}
+
+// resolveCwd validates a caller-supplied working directory: it must resolve
+// inside the sandbox root (same rules as the MCP tools) and exist.
+func (m *Manager) resolveCwd(userPath string) (string, error) {
+	if m.cfg.SandboxRoot == "" {
+		return "", fmt.Errorf("%w: no sandbox root configured", ErrInvalidCwd)
+	}
+	resolved, err := sandbox.Resolve(m.cfg.SandboxRoot, userPath)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidCwd, err)
+	}
+	fi, err := os.Stat(resolved)
+	if err != nil || !fi.IsDir() {
+		return "", fmt.Errorf("%w: %q is not an existing directory", ErrInvalidCwd, resolved)
+	}
+	return resolved, nil
 }
 
 // List reports currently active sessions.
@@ -254,10 +302,10 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 		state, err := getState(ctx, s.proc)
 		if err != nil {
 			// Process may be mid-shutdown; report what we know.
-			infos = append(infos, Info{ID: s.id, File: s.file})
+			infos = append(infos, Info{ID: s.id, File: s.file, Cwd: s.cwd})
 			continue
 		}
-		infos = append(infos, infoFromState(state))
+		infos = append(infos, infoWithCwd(state, s.cwd))
 	}
 	return infos, nil
 }
@@ -277,7 +325,7 @@ func (m *Manager) Get(ctx context.Context, id string) (Info, Stats, error) {
 		return Info{}, Stats{}, err
 	}
 	m.touch(s)
-	return infoFromState(state), stats, nil
+	return infoWithCwd(state, s.cwd), stats, nil
 }
 
 // Send delivers one prompt and blocks until the run settles. onEvent, when
@@ -731,8 +779,22 @@ func (m *Manager) attach(ctx context.Context, id string) (*session, error) {
 }
 
 func (m *Manager) reattach(ctx context.Context, id string) (*session, error) {
+	// pi resolves `--session <id>` against the process working directory: a
+	// session recorded under a different cwd is only found by the global
+	// search, which prompts interactively and would wedge a headless RPC
+	// process. Spawn in the session's own cwd so the lookup stays local; pi
+	// then restores that cwd from the session header anyway.
+	cwd := m.sessionCwd(id)
+	if cwd != "" {
+		if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
+			m.logger.Warn("pi session cwd no longer exists, re-attaching from process cwd",
+				slog.String("session_id", id), slog.String("cwd", cwd))
+			cwd = ""
+		}
+	}
+
 	args := m.appendSessionDir([]string{"--mode", "rpc", "--session", id})
-	proc, err := m.spawn(args)
+	proc, err := m.spawn(args, cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -752,24 +814,57 @@ func (m *Manager) reattach(ctx context.Context, id string) (*session, error) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
 
-	m.logger.Info("pi session re-attached", slog.String("session_id", id))
+	if cwd != "" {
+		m.mu.Lock()
+		m.cwds[id] = cwd
+		m.mu.Unlock()
+	}
+
+	m.logger.Info("pi session re-attached", slog.String("session_id", id), slog.String("cwd", cwd))
 	return &session{
 		id:       id,
 		file:     state.SessionFile,
+		cwd:      cwd,
 		proc:     proc,
 		runSlot:  make(chan struct{}, 1),
 		lastUsed: time.Now(),
 	}, nil
 }
 
-func (m *Manager) spawn(args []string) (*process, error) {
+// sessionCwd recovers the working directory of a session that is not active:
+// from the in-memory map first, then from the cwd pi records in the session
+// file header (covers sessions created before a server restart).
+func (m *Manager) sessionCwd(id string) string {
+	m.mu.Lock()
+	cwd := m.cwds[id]
+	m.mu.Unlock()
+	if cwd != "" {
+		return cwd
+	}
+	return findSessionCwd(m.sessionRoot(), id)
+}
+
+// sessionRoot is the directory holding pi's session files: the configured
+// override, or pi's default ~/.pi/agent/sessions.
+func (m *Manager) sessionRoot() string {
+	if m.cfg.SessionDir != "" {
+		return m.cfg.SessionDir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".pi", "agent", "sessions")
+}
+
+func (m *Manager) spawn(args []string, dir string) (*process, error) {
 	m.mu.Lock()
 	if len(m.sessions)+len(m.inflight) >= m.cfg.MaxSessions {
 		m.mu.Unlock()
 		return nil, ErrTooManySessions
 	}
 	m.mu.Unlock()
-	return startProcess(m.logger, m.cfg.Bin, args)
+	return startProcess(m.logger, m.cfg.Bin, args, dir)
 }
 
 func (m *Manager) appendSessionDir(args []string) []string {
@@ -871,7 +966,9 @@ func getLastAssistantText(ctx context.Context, proc *process) (string, error) {
 	return *payload.Text, nil
 }
 
-func infoFromState(state stateData) Info {
+// infoWithCwd builds an Info from pi's state plus the cwd the manager tracks
+// (get_state does not report a working directory).
+func infoWithCwd(state stateData, cwd string) Info {
 	model := ""
 	if state.Model != nil {
 		model = state.Model.Provider + "/" + state.Model.ID
@@ -883,5 +980,6 @@ func infoFromState(state stateData) Info {
 		Model:        model,
 		Streaming:    state.IsStreaming,
 		MessageCount: state.MessageCount,
+		Cwd:          cwd,
 	}
 }

@@ -3,7 +3,10 @@ package pi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -366,6 +369,127 @@ func TestAvailableModels(t *testing.T) {
 	}
 	if len(models) != 2 {
 		t.Fatalf("models after re-attach = %+v, want 2", models)
+	}
+}
+
+// sameDir compares paths after resolving symlinks (macOS tempdirs live under
+// /var -> /private/var, so the child's os.Getwd differs textually).
+func sameDir(t *testing.T, got, want string) {
+	t.Helper()
+	gotReal, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("resolve %q: %v", got, err)
+	}
+	wantReal, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		t.Fatalf("resolve %q: %v", want, err)
+	}
+	if gotReal != wantReal {
+		t.Fatalf("dir = %q, want %q", gotReal, wantReal)
+	}
+}
+
+func TestCreateSpawnsInRequestedCwd(t *testing.T) {
+	root := t.TempDir()
+	proj := filepath.Join(root, "proj")
+	if err := os.Mkdir(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readSpawns := spawnLogSetup(t)
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4, SandboxRoot: root})
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{Cwd: "proj"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sameDir(t, info.Cwd, proj)
+
+	spawns := readSpawns()
+	if len(spawns) != 1 {
+		t.Fatalf("spawns = %v, want 1", spawns)
+	}
+	sameDir(t, spawns[0], proj)
+}
+
+func TestCreateCwdValidation(t *testing.T) {
+	root := t.TempDir()
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4, SandboxRoot: root})
+	ctx := testCtx(t)
+
+	for _, cwd := range []string{"../escape", "/etc", "does-not-exist"} {
+		if _, err := m.Create(ctx, CreateOpts{Cwd: cwd}); !errors.Is(err, ErrInvalidCwd) {
+			t.Fatalf("Create(cwd=%q) = %v, want ErrInvalidCwd", cwd, err)
+		}
+	}
+
+	// A cwd pointing at a file (not a directory) is rejected too.
+	file := filepath.Join(root, "afile")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create(ctx, CreateOpts{Cwd: "afile"}); !errors.Is(err, ErrInvalidCwd) {
+		t.Fatalf("Create(cwd=file) = %v, want ErrInvalidCwd", err)
+	}
+}
+
+func TestReattachSpawnsInSessionCwd(t *testing.T) {
+	sessionDir := t.TempDir()
+	workDir := t.TempDir()
+
+	// pi records the session cwd in the session file header; the manager must
+	// read it back so a re-attached process spawns in the session's own cwd.
+	// The file sits in a per-cwd subdirectory like pi's default layout.
+	subDir := filepath.Join(sessionDir, "--encoded-cwd--")
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	header := fmt.Sprintf(`{"type":"session","version":3,"id":"known-abc123","timestamp":"2026-01-01T00:00:00.000Z","cwd":%q}`, workDir)
+	sessionFile := filepath.Join(subDir, "2026-01-01T00-00-00-000Z_known-abc123.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(header+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	readSpawns := spawnLogSetup(t)
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4, SessionDir: sessionDir})
+	ctx := testCtx(t)
+
+	info, _, err := m.Get(ctx, "known-abc123")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if info.Cwd != workDir {
+		t.Fatalf("info.Cwd = %q, want %q", info.Cwd, workDir)
+	}
+
+	spawns := readSpawns()
+	if len(spawns) != 1 {
+		t.Fatalf("spawns = %v, want 1", spawns)
+	}
+	sameDir(t, spawns[0], workDir)
+}
+
+func TestFindSessionCwd(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "x_flat-id.jsonl"),
+		[]byte(`{"type":"session","id":"flat-id","cwd":"/flat/dir"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A file whose name matches but whose header belongs to another session
+	// must be ignored.
+	if err := os.WriteFile(filepath.Join(root, "y_other-id.jsonl"),
+		[]byte(`{"type":"session","id":"different","cwd":"/wrong"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := findSessionCwd(root, "flat-id"); got != "/flat/dir" {
+		t.Fatalf("findSessionCwd = %q, want /flat/dir", got)
+	}
+	if got := findSessionCwd(root, "other-id"); got != "" {
+		t.Fatalf("findSessionCwd mismatched header = %q, want empty", got)
+	}
+	if got := findSessionCwd(root, "missing"); got != "" {
+		t.Fatalf("findSessionCwd missing = %q, want empty", got)
 	}
 }
 

@@ -63,6 +63,10 @@ message CreateSessionRequest {
   string model = 3;
   // Optional thinking level: off, minimal, low, medium, high, xhigh, max.
   string thinking_level = 4;
+  // Optional working directory for the session's pi process, absolute or
+  // relative to the box's sandbox root. Must resolve inside the sandbox root
+  // and exist. Empty keeps the server process working directory.
+  string cwd = 5;
 }
 
 message CreateSessionResponse {
@@ -216,6 +220,8 @@ message Session {
   // True while a run is in flight.
   bool streaming = 5;
   int32 message_count = 6;
+  // Effective working directory of the session process ("" when unknown).
+  string cwd = 7;
 }
 
 message SessionStats {
