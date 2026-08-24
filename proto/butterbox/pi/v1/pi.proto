@@ -30,6 +30,22 @@ service PiService {
   // settles. The final message has type "agent_settled".
   rpc StreamMessage(StreamMessageRequest) returns (stream StreamMessageResponse);
 
+  // SubmitMessage accepts one prompt and returns immediately with a turn
+  // cursor. The run is detached from the request lifetime: a dropped
+  // connection never aborts it. Poll or long-poll the run with GetTurn;
+  // AbortSession is the only way to cancel it.
+  rpc SubmitMessage(SubmitMessageRequest) returns (SubmitMessageResponse);
+
+  // GetTurn reports whether the run submitted at turn_cursor is still in
+  // flight, optionally waiting for it to settle, and returns its result once
+  // the session entries past the cursor contain an assistant message.
+  rpc GetTurn(GetTurnRequest) returns (GetTurnResponse);
+
+  // GetAvailableModels reports the models the session's pi process can use
+  // (as configured by pi's providers/auth on this box), re-attaching the
+  // session if it is not currently active.
+  rpc GetAvailableModels(GetAvailableModelsRequest) returns (GetAvailableModelsResponse);
+
   // AbortSession aborts the in-flight run, if any.
   rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);
 
@@ -95,6 +111,83 @@ message StreamMessageResponse {
   string type = 1;
   // Full pi event as JSON, passed through verbatim.
   string payload_json = 2;
+}
+
+message SubmitMessageRequest {
+  string session_id = 1;
+  string message = 2;
+  repeated ImageContent images = 3;
+}
+
+message SubmitMessageResponse {
+  // pi's entries cursor at submit time: the session's leaf entry id, "" for
+  // a session with no entries yet. Stable across process restarts — pass it
+  // to GetTurn to await or recover this turn's result.
+  string turn_cursor = 1;
+}
+
+message GetTurnRequest {
+  string session_id = 1;
+  // Cursor returned by SubmitMessage.
+  string turn_cursor = 2;
+  // 0 answers immediately (pure poll); >0 waits up to this many seconds
+  // (capped at 30) for the run to settle before answering.
+  int32 wait_seconds = 3;
+}
+
+message GetTurnResponse {
+  // True while a run is still in flight on the session.
+  bool running = 1;
+  // Set when entries past turn_cursor contain an assistant message. Unset
+  // with running=false means the turn did not finish (e.g. the process was
+  // restarted mid-run or the turn was aborted before any assistant reply).
+  TurnResult result = 2;
+}
+
+message TurnResult {
+  // Text of the last assistant message produced after the turn cursor.
+  string text = 1;
+  // Stop reason of that assistant message: stop, length, toolUse, error,
+  // aborted.
+  string stop_reason = 2;
+  // Cumulative session statistics.
+  SessionStats stats = 3;
+}
+
+message GetAvailableModelsRequest {
+  string session_id = 1;
+}
+
+message GetAvailableModelsResponse {
+  repeated Model models = 1;
+}
+
+message Model {
+  // Model ID as accepted by pi's --model flag and set_model (e.g.
+  // "claude-fable-5").
+  string id = 1;
+  // Provider ID (e.g. "anthropic").
+  string provider = 2;
+  // Human-readable model name.
+  string name = 3;
+  // Wire API the model speaks (e.g. "anthropic-messages",
+  // "openai-responses").
+  string api = 4;
+  // True when the model supports reasoning/thinking.
+  bool reasoning = 5;
+  // Supported input modalities: "text", "image".
+  repeated string input = 6;
+  int64 context_window = 7;
+  int64 max_tokens = 8;
+  // Cost in USD per million tokens.
+  ModelCost cost = 9;
+}
+
+message ModelCost {
+  double input = 1;
+  double output = 2;
+  double cache_read = 3;
+  double cache_write = 4;
 }
 
 message AbortSessionRequest {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +17,7 @@ var (
 	ErrBusy            = errors.New("session is processing another message")
 	ErrTooManySessions = errors.New("active session limit reached")
 	ErrNotFound        = errors.New("session not found")
+	ErrBadCursor       = errors.New("unknown turn cursor")
 )
 
 const (
@@ -23,6 +25,9 @@ const (
 	defaultIdleTimeout  = 30 * time.Minute
 	defaultSetupTimeout = 60 * time.Second
 	janitorInterval     = time.Minute
+	// maxTurnWait caps GetTurn long-polling so no single request outlives
+	// typical proxy idle timeouts.
+	maxTurnWait = 30 * time.Second
 )
 
 // Config configures the session manager.
@@ -79,6 +84,23 @@ type Stats struct {
 	ContextPercent int32
 }
 
+// Model describes one model available to a pi process.
+type Model struct {
+	ID            string
+	Provider      string
+	Name          string
+	API           string
+	Reasoning     bool
+	Input         []string
+	ContextWindow int64
+	MaxTokens     int64
+	// Costs are USD per million tokens.
+	CostInput      float64
+	CostOutput     float64
+	CostCacheRead  float64
+	CostCacheWrite float64
+}
+
 // SendResult is the outcome of one settled prompt run.
 type SendResult struct {
 	Text       string
@@ -91,7 +113,21 @@ type session struct {
 	file     string
 	proc     *process
 	runSlot  chan struct{} // capacity 1: holding the token = running a prompt
+	turn     *turnState    // guarded by Manager.mu; non-nil while a submitted run is in flight
 	lastUsed time.Time
+}
+
+// turnState tracks one detached (submitted) run.
+type turnState struct {
+	done chan struct{} // closed when the run settles or the process exits
+}
+
+// TurnStatus is the answer to one GetTurn poll.
+type TurnStatus struct {
+	Running bool
+	// Result is set when the turn produced an assistant message. Nil with
+	// Running=false means the turn did not finish.
+	Result *SendResult
 }
 
 // Manager owns the pi session processes on this box.
@@ -294,6 +330,219 @@ func (m *Manager) Send(ctx context.Context, id, message string, images []ImageIn
 	return SendResult{Text: text, StopReason: stopReason, Stats: stats}, nil
 }
 
+// Submit delivers one prompt and returns immediately with the turn cursor:
+// pi's entries cursor (leaf entry id) at submit time, stable across process
+// restarts. The run is detached from ctx — cancelling the request never
+// aborts it; Abort is the only way to cancel. Await the result with Turn.
+func (m *Manager) Submit(ctx context.Context, id, message string, images []ImageInput) (string, error) {
+	s, err := m.attach(ctx, id)
+	if err != nil {
+		return "", err
+	}
+
+	select {
+	case s.runSlot <- struct{}{}:
+	default:
+		return "", ErrBusy
+	}
+	release := func() {
+		<-s.runSlot
+		m.touch(s)
+	}
+
+	// The setup calls run on their own timeout, not the request context: once
+	// the RPC has reached the server, a client disconnect must not leave a
+	// half-started turn behind.
+	setupCtx, cancel := context.WithTimeout(context.Background(), defaultSetupTimeout)
+	defer cancel()
+
+	cursor, err := getLeafCursor(setupCtx, s.proc)
+	if err != nil {
+		release()
+		return "", err
+	}
+
+	sub := s.proc.subscribe()
+
+	cmd := map[string]any{"type": "prompt", "message": message}
+	if len(images) > 0 {
+		payload := make([]imagePayload, len(images))
+		for i, img := range images {
+			payload[i] = imagePayload{Type: "image", Data: img.Base64Data, MimeType: img.MimeType}
+		}
+		cmd["images"] = payload
+	}
+	if _, err := s.proc.callOK(setupCtx, cmd); err != nil {
+		sub.Cancel()
+		release()
+		return "", err
+	}
+
+	t := &turnState{done: make(chan struct{})}
+	m.mu.Lock()
+	s.turn = t
+	m.mu.Unlock()
+
+	go m.finishDetached(s, t, sub)
+
+	m.logger.Info("pi turn submitted",
+		slog.String("session_id", s.id),
+		slog.String("turn_cursor", cursor),
+	)
+	return cursor, nil
+}
+
+// finishDetached consumes events until the submitted run settles (or the
+// process exits), then releases the session. It holds the run slot for the
+// whole run, which also keeps the idle janitor away.
+func (m *Manager) finishDetached(s *session, t *turnState, sub *subscription) {
+	defer func() {
+		m.mu.Lock()
+		if s.turn == t {
+			s.turn = nil
+		}
+		m.mu.Unlock()
+		close(t.done)
+		<-s.runSlot
+		m.touch(s)
+	}()
+	defer sub.Cancel()
+
+	// Background context: nothing cancels a detached run except Abort or the
+	// process dying (which closes the subscription).
+	if _, err := m.waitSettled(context.Background(), s.proc, sub, nil); err != nil {
+		m.logger.Warn("submitted pi run ended without settling",
+			slog.String("session_id", s.id), slog.Any("error", err))
+		return
+	}
+	m.logger.Info("submitted pi run settled", slog.String("session_id", s.id))
+}
+
+// Turn reports the state of the run submitted at cursor. wait=0 answers
+// immediately; wait>0 (capped at maxTurnWait) waits for the run to settle
+// first. Completion is judged from the session entries after the cursor, not
+// process state, so a restart mid-run yields an honest "did not finish"
+// (Running=false, Result=nil) rather than a stale previous answer.
+func (m *Manager) Turn(ctx context.Context, id, cursor string, wait time.Duration) (TurnStatus, error) {
+	if wait > maxTurnWait {
+		wait = maxTurnWait
+	}
+	deadline := time.Now().Add(wait)
+
+	s, err := m.attach(ctx, id)
+	if err != nil {
+		return TurnStatus{}, err
+	}
+
+	for {
+		m.mu.Lock()
+		t := s.turn
+		m.mu.Unlock()
+
+		running := t != nil
+		if !running {
+			// A run driven by unary Send also occupies the session; report it
+			// via pi's own streaming flag.
+			state, err := getState(ctx, s.proc)
+			if err != nil {
+				return TurnStatus{}, err
+			}
+			running = state.IsStreaming
+		}
+		if !running {
+			break
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			m.touch(s)
+			return TurnStatus{Running: true}, nil
+		}
+		if t != nil {
+			select {
+			case <-t.done:
+			case <-time.After(remaining):
+			case <-ctx.Done():
+				return TurnStatus{}, ctx.Err()
+			}
+		} else {
+			select {
+			case <-time.After(min(remaining, 500*time.Millisecond)):
+			case <-ctx.Done():
+				return TurnStatus{}, ctx.Err()
+			}
+		}
+	}
+
+	result, err := m.turnResult(ctx, s.proc, cursor)
+	if err != nil {
+		return TurnStatus{}, err
+	}
+	m.touch(s)
+	return TurnStatus{Running: false, Result: result}, nil
+}
+
+// turnResult reads the entries after cursor and extracts the turn's outcome
+// from the last assistant message, or nil when the turn produced none.
+func (m *Manager) turnResult(ctx context.Context, proc *process, cursor string) (*SendResult, error) {
+	cmd := map[string]any{"type": "get_entries"}
+	if cursor != "" {
+		cmd["since"] = cursor
+	}
+	data, err := proc.callOK(ctx, cmd)
+	if err != nil {
+		// pi reports an unknown `since` id as "Entry not found: <id>".
+		if strings.Contains(err.Error(), "Entry not found") {
+			return nil, fmt.Errorf("%w: %s", ErrBadCursor, cursor)
+		}
+		return nil, err
+	}
+	var payload entriesData
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode get_entries: %w", err)
+	}
+
+	var last *entryData
+	for i := range payload.Entries {
+		e := &payload.Entries[i]
+		if e.Type == "message" && e.Message.Role == "assistant" {
+			last = e
+		}
+	}
+	if last == nil {
+		return nil, nil
+	}
+
+	text := ""
+	for _, block := range last.Message.Content {
+		if block.Type == "text" {
+			text += block.Text
+		}
+	}
+	stats, err := getStats(ctx, proc)
+	if err != nil {
+		return nil, err
+	}
+	return &SendResult{Text: text, StopReason: last.Message.StopReason, Stats: stats}, nil
+}
+
+// getLeafCursor returns the session's current leaf entry id, "" when the
+// session has no entries yet.
+func getLeafCursor(ctx context.Context, proc *process) (string, error) {
+	data, err := proc.callOK(ctx, map[string]any{"type": "get_entries"})
+	if err != nil {
+		return "", err
+	}
+	var payload entriesData
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", fmt.Errorf("decode get_entries: %w", err)
+	}
+	if payload.LeafID == nil {
+		return "", nil
+	}
+	return *payload.LeafID, nil
+}
+
 // waitSettled consumes events until agent_settled, tracking the last
 // assistant stop reason. Client cancellation aborts the in-flight run.
 func (m *Manager) waitSettled(ctx context.Context, proc *process, sub *subscription, onEvent func(string, []byte) error) (string, error) {
@@ -334,6 +583,45 @@ func (m *Manager) waitSettled(ctx context.Context, proc *process, sub *subscript
 			return "", proc.exitError()
 		}
 	}
+}
+
+// AvailableModels reports the models the session's pi process can use,
+// re-attaching the session if needed.
+func (m *Manager) AvailableModels(ctx context.Context, id string) ([]Model, error) {
+	s, err := m.attach(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	data, err := s.proc.callOK(ctx, map[string]any{"type": "get_available_models"})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Models []modelData `json:"models"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode get_available_models: %w", err)
+	}
+	m.touch(s)
+
+	models := make([]Model, len(payload.Models))
+	for i, md := range payload.Models {
+		models[i] = Model{
+			ID:             md.ID,
+			Provider:       md.Provider,
+			Name:           md.Name,
+			API:            md.API,
+			Reasoning:      md.Reasoning,
+			Input:          md.Input,
+			ContextWindow:  md.ContextWindow,
+			MaxTokens:      md.MaxTokens,
+			CostInput:      md.Cost.Input,
+			CostOutput:     md.Cost.Output,
+			CostCacheRead:  md.Cost.CacheRead,
+			CostCacheWrite: md.Cost.CacheWrite,
+		}
+	}
+	return models, nil
 }
 
 // Abort cancels the in-flight run, if any. Aborting an inactive session is a

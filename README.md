@@ -130,7 +130,9 @@ When `PI_API_ENABLED=true`, ButterBox exposes the [pi coding agent](https://gith
 
 Each session maps to a supervised `pi --mode rpc` child process speaking pi's JSONL RPC protocol. Session IDs are pi's own session IDs and session data lives in pi's session directory, so idle sessions are stopped and transparently re-attached on next use — and every API-driven session shows up in pi-web when that is enabled too. Extension UI dialogs are auto-cancelled so a headless run can never wedge.
 
-RPCs: `CreateSession`, `ListSessions`, `GetSession`, `SendMessage` (unary, returns after the run fully settles), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+RPCs: `CreateSession`, `ListSessions`, `GetSession`, `GetAvailableModels` (models the session's pi process can use, with provider, modalities, limits, and USD-per-million-token costs), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+
+For long runs prefer the async pair over `SendMessage`: `SubmitMessage` detaches the run from the request lifetime (a dropped connection never aborts it; `AbortSession` is the only way to cancel) and returns pi's entries cursor at submit time, which is stable across process restarts. `GetTurn` with `wait_seconds: 0` is a pure poll; `wait_seconds > 0` long-polls up to 30s. Completion is judged from the session entries after the cursor, so a box restart mid-run reports an honest "did not finish" (`running: false` with no `result`) instead of a stale previous answer. Submitting while a run is in flight returns the same busy error as `SendMessage`.
 
 ConnectRPC speaks plain JSON over HTTP POST, so curl works:
 

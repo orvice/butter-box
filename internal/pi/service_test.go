@@ -47,6 +47,18 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatalf("stats = %+v", got.Msg.GetStats())
 	}
 
+	models, err := client.GetAvailableModels(ctx, connect.NewRequest(&piv1.GetAvailableModelsRequest{SessionId: id}))
+	if err != nil {
+		t.Fatalf("GetAvailableModels: %v", err)
+	}
+	if len(models.Msg.GetModels()) != 2 {
+		t.Fatalf("models = %+v, want 2", models.Msg.GetModels())
+	}
+	first := models.Msg.GetModels()[0]
+	if first.GetId() != "fake-model" || first.GetCost().GetOutput() != 15.0 {
+		t.Fatalf("first model = %+v", first)
+	}
+
 	sent, err := client.SendMessage(ctx, connect.NewRequest(&piv1.SendMessageRequest{
 		SessionId: id,
 		Message:   "hello over connect",
@@ -85,6 +97,45 @@ func TestServiceEndToEnd(t *testing.T) {
 	}
 	if !sawDelta {
 		t.Fatalf("stream types = %v, missing text delta payload", types)
+	}
+
+	// Async path: submit, observe running via poll, then long-poll the result.
+	submitted, err := client.SubmitMessage(ctx, connect.NewRequest(&piv1.SubmitMessageRequest{
+		SessionId: id,
+		Message:   "slow async hello",
+	}))
+	if err != nil {
+		t.Fatalf("SubmitMessage: %v", err)
+	}
+	cursor := submitted.Msg.GetTurnCursor()
+
+	turn, err := client.GetTurn(ctx, connect.NewRequest(&piv1.GetTurnRequest{
+		SessionId:  id,
+		TurnCursor: cursor,
+	}))
+	if err != nil {
+		t.Fatalf("GetTurn poll: %v", err)
+	}
+	if !turn.Msg.GetRunning() {
+		t.Fatalf("turn = %+v, want running", turn.Msg)
+	}
+
+	turn, err = client.GetTurn(ctx, connect.NewRequest(&piv1.GetTurnRequest{
+		SessionId:   id,
+		TurnCursor:  cursor,
+		WaitSeconds: 10,
+	}))
+	if err != nil {
+		t.Fatalf("GetTurn long-poll: %v", err)
+	}
+	if turn.Msg.GetRunning() || turn.Msg.GetResult() == nil {
+		t.Fatalf("turn after settle = %+v, want result", turn.Msg)
+	}
+	if turn.Msg.GetResult().GetText() != "echo: slow async hello" {
+		t.Fatalf("turn text = %q", turn.Msg.GetResult().GetText())
+	}
+	if turn.Msg.GetResult().GetStopReason() != "stop" {
+		t.Fatalf("turn stop reason = %q", turn.Msg.GetResult().GetStopReason())
 	}
 
 	if _, err := client.DeleteSession(ctx, connect.NewRequest(&piv1.DeleteSessionRequest{SessionId: id})); err != nil {

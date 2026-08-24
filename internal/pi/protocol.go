@@ -58,6 +58,46 @@ type statsData struct {
 	} `json:"contextUsage"`
 }
 
+// modelData mirrors the fields of one entry in get_available_models'
+// response data we consume (pi-ai's Model type).
+type modelData struct {
+	ID            string   `json:"id"`
+	Provider      string   `json:"provider"`
+	Name          string   `json:"name"`
+	API           string   `json:"api"`
+	Reasoning     bool     `json:"reasoning"`
+	Input         []string `json:"input"`
+	ContextWindow int64    `json:"contextWindow"`
+	MaxTokens     int64    `json:"maxTokens"`
+	Cost          struct {
+		Input      float64 `json:"input"`
+		Output     float64 `json:"output"`
+		CacheRead  float64 `json:"cacheRead"`
+		CacheWrite float64 `json:"cacheWrite"`
+	} `json:"cost"`
+}
+
+// entryData mirrors the fields of one session entry in get_entries' response
+// data we consume.
+type entryData struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Message struct {
+		Role       string `json:"role"`
+		StopReason string `json:"stopReason"`
+		Content    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+// entriesData mirrors get_entries' response data.
+type entriesData struct {
+	Entries []entryData `json:"entries"`
+	LeafID  *string     `json:"leafId"`
+}
+
 // assistantEnd extracts the stop reason from a message_end event when the
 // completed message is an assistant message.
 type assistantEnd struct {

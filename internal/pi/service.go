@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -80,6 +81,58 @@ func (s *Service) StreamMessage(ctx context.Context, req *connect.Request[piv1.S
 	return nil
 }
 
+func (s *Service) SubmitMessage(ctx context.Context, req *connect.Request[piv1.SubmitMessageRequest]) (*connect.Response[piv1.SubmitMessageResponse], error) {
+	cursor, err := s.manager.Submit(ctx, req.Msg.GetSessionId(), req.Msg.GetMessage(), imagesInput(req.Msg.GetImages()))
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	return connect.NewResponse(&piv1.SubmitMessageResponse{TurnCursor: cursor}), nil
+}
+
+func (s *Service) GetTurn(ctx context.Context, req *connect.Request[piv1.GetTurnRequest]) (*connect.Response[piv1.GetTurnResponse], error) {
+	wait := time.Duration(req.Msg.GetWaitSeconds()) * time.Second
+	status, err := s.manager.Turn(ctx, req.Msg.GetSessionId(), req.Msg.GetTurnCursor(), wait)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	resp := &piv1.GetTurnResponse{Running: status.Running}
+	if status.Result != nil {
+		resp.Result = &piv1.TurnResult{
+			Text:       status.Result.Text,
+			StopReason: status.Result.StopReason,
+			Stats:      statsProto(status.Result.Stats),
+		}
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Service) GetAvailableModels(ctx context.Context, req *connect.Request[piv1.GetAvailableModelsRequest]) (*connect.Response[piv1.GetAvailableModelsResponse], error) {
+	models, err := s.manager.AvailableModels(ctx, req.Msg.GetSessionId())
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	resp := &piv1.GetAvailableModelsResponse{}
+	for _, m := range models {
+		resp.Models = append(resp.Models, &piv1.Model{
+			Id:            m.ID,
+			Provider:      m.Provider,
+			Name:          m.Name,
+			Api:           m.API,
+			Reasoning:     m.Reasoning,
+			Input:         m.Input,
+			ContextWindow: m.ContextWindow,
+			MaxTokens:     m.MaxTokens,
+			Cost: &piv1.ModelCost{
+				Input:      m.CostInput,
+				Output:     m.CostOutput,
+				CacheRead:  m.CostCacheRead,
+				CacheWrite: m.CostCacheWrite,
+			},
+		})
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Service) AbortSession(ctx context.Context, req *connect.Request[piv1.AbortSessionRequest]) (*connect.Response[piv1.AbortSessionResponse], error) {
 	if err := s.manager.Abort(ctx, req.Msg.GetSessionId()); err != nil {
 		return nil, rpcError(err)
@@ -102,6 +155,8 @@ func rpcError(err error) error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, ErrTooManySessions):
 		return connect.NewError(connect.CodeResourceExhausted, err)
+	case errors.Is(err, ErrBadCursor):
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, context.Canceled):
 		return connect.NewError(connect.CodeCanceled, err)
 	case errors.Is(err, context.DeadlineExceeded):
