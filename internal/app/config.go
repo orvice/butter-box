@@ -65,9 +65,14 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	token := strings.TrimSpace(os.Getenv("MCP_AUTH_TOKEN"))
+	if token == "" {
+		return nil, errors.New("MCP_AUTH_TOKEN is required: refusing to run with an unauthenticated MCP endpoint and Pi API")
+	}
+
 	return &Config{
 		Addr:         getenvDefault("MCP_ADDR", defaultAddr),
-		Token:        os.Getenv("MCP_AUTH_TOKEN"),
+		Token:        token,
 		Root:         filepath.Clean(absRoot),
 		Shell:        getenvDefault("SANDBOX_SHELL", "bash"),
 		HTTPPath:     httpPath,

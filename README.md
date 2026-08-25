@@ -30,22 +30,19 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 ## Local Run
 
 ```bash
-go run .
-```
-
-Default endpoints:
-
-- MCP endpoint: `http://127.0.0.1:8080/mcp`
-- health: `http://127.0.0.1:8080/healthz`
-
-Example:
-
-```bash
 MCP_ADDR=:8080 \
 SANDBOX_ROOT=/workspace \
 MCP_AUTH_TOKEN=secret-token \
 go run .
 ```
+
+`MCP_AUTH_TOKEN` is required — the server refuses to start without it
+(see [Environment Variables](#environment-variables)).
+
+Default endpoints:
+
+- MCP endpoint: `http://127.0.0.1:8080/mcp`
+- health: `http://127.0.0.1:8080/healthz`
 
 ## Docker Run
 
@@ -96,7 +93,7 @@ docker compose up -d
 
 - `MCP_ADDR`: HTTP listen address, default `:8080`
 - `MCP_HTTP_PATH`: MCP HTTP path, default `/mcp`
-- `MCP_AUTH_TOKEN`: when set, requires `Authorization: Bearer <token>`
+- `MCP_AUTH_TOKEN`: **required.** Protects the MCP endpoint and the Pi API with `Authorization: Bearer <token>`. The server refuses to start without it — there is no unauthenticated mode.
 - `SANDBOX_ROOT`: workspace root for file access and command execution, default current directory
 - `SANDBOX_SHELL`: shell used by the `ExecCommand` tool, default `bash`
 - `MCP_STATELESS`: enable stateless streamable HTTP mode, default `false`
@@ -126,7 +123,7 @@ Then open `http://127.0.0.1:8080/` and log in with username `pi` and the configu
 
 ## Pi API
 
-When `PI_API_ENABLED=true`, ButterBox exposes the [pi coding agent](https://github.com/earendil-works/pi) as an agent runtime over ConnectRPC. The service is defined in [`proto/butterbox/pi/v1/pi.proto`](proto/butterbox/pi/v1/pi.proto) and mounted at `/butterbox.pi.v1.PiService/`, protected by the same `MCP_AUTH_TOKEN` bearer auth as the MCP endpoint.
+When `PI_API_ENABLED=true`, ButterBox exposes the [pi coding agent](https://github.com/earendil-works/pi) as an agent runtime over ConnectRPC. The service is defined in [`proto/butterbox/pi/v1/pi.proto`](proto/butterbox/pi/v1/pi.proto) and mounted at `/butterbox.pi.v1.PiService/`, protected by the same required `MCP_AUTH_TOKEN` bearer auth as the MCP endpoint (see [Environment Variables](#environment-variables)).
 
 Each session maps to a supervised `pi --mode rpc` child process speaking pi's JSONL RPC protocol. Session IDs are pi's own session IDs and session data lives in pi's session directory, so idle sessions are stopped and transparently re-attached on next use — and every API-driven session shows up in pi-web when that is enabled too. Extension UI dialogs are auto-cancelled so a headless run can never wedge.
 
