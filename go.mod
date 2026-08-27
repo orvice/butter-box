@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	connectrpc.com/connect v1.18.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d
 	google.golang.org/protobuf v1.36.11
 )
 

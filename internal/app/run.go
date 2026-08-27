@@ -9,7 +9,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/orvice/butter-box/internal/cursor"
 	"github.com/orvice/butter-box/internal/pi"
+	cursorv1connect "github.com/orvice/butter-box/pkg/proto/butterbox/cursor/v1/cursorv1connect"
 	"github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1/piv1connect"
 )
 
@@ -53,6 +55,23 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		mux.Handle(path, WithBearerAuth(handler, cfg.Token))
 	}
 
+	if cfg.Cursor.Enabled {
+		manager := cursor.NewManager(logger, cursor.Config{
+			Bin:         cfg.Cursor.Bin,
+			APIKey:      cfg.Cursor.APIKey,
+			MaxSessions: cfg.Cursor.MaxSessions,
+			IdleTimeout: cfg.Cursor.IdleTimeout,
+			SandboxRoot: cfg.Root,
+		})
+		defer manager.Stop()
+		path, handler := cursorv1connect.NewCursorServiceHandler(cursor.NewService(manager))
+		cursorToken := cfg.Cursor.AuthToken
+		if cursorToken == "" {
+			cursorToken = cfg.Token
+		}
+		mux.Handle(path, WithBearerAuth(handler, cursorToken))
+	}
+
 	httpServer := &http.Server{
 		Addr:    cfg.Addr,
 		Handler: mux,
@@ -67,6 +86,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 		slog.Bool("json_response", cfg.JSONResponse),
 		slog.Bool("pi_web_enabled", cfg.PiWeb.Enabled),
 		slog.Bool("pi_api_enabled", cfg.PiAPI.Enabled),
+		slog.Bool("cursor_api_enabled", cfg.Cursor.Enabled),
 	)
 
 	errCh := make(chan error, 1)

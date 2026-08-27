@@ -25,6 +25,7 @@ type Config struct {
 	JSONResponse bool
 	PiWeb        PiWebConfig
 	PiAPI        PiAPIConfig
+	Cursor       CursorAPIConfig
 }
 
 type PiWebConfig struct {
@@ -41,6 +42,17 @@ type PiAPIConfig struct {
 	MaxSessions int
 	IdleTimeout time.Duration
 	SessionDir  string
+}
+
+// CursorAPIConfig configures the Cursor SDK Bridge session API. The Cursor
+// API key is passed to the bridge and is never returned by the box service.
+type CursorAPIConfig struct {
+	Enabled     bool
+	Bin         string
+	APIKey      string
+	AuthToken   string
+	MaxSessions int
+	IdleTimeout time.Duration
 }
 
 func LoadConfig() (*Config, error) {
@@ -65,6 +77,11 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	cursorAPI, err := loadCursorAPIConfig(piAPI)
+	if err != nil {
+		return nil, err
+	}
+
 	token := strings.TrimSpace(os.Getenv("MCP_AUTH_TOKEN"))
 	if token == "" {
 		return nil, errors.New("MCP_AUTH_TOKEN is required: refusing to run with an unauthenticated MCP endpoint and Pi API")
@@ -80,6 +97,7 @@ func LoadConfig() (*Config, error) {
 		JSONResponse: envBool("MCP_JSON_RESPONSE", false),
 		PiWeb:        piWeb,
 		PiAPI:        piAPI,
+		Cursor:       cursorAPI,
 	}, nil
 }
 
@@ -104,6 +122,46 @@ func loadPiAPIConfig() (PiAPIConfig, error) {
 	timeout, err := time.ParseDuration(idle)
 	if err != nil || timeout <= 0 {
 		return cfg, fmt.Errorf("PI_API_IDLE_TIMEOUT must be a positive duration, got %q", idle)
+	}
+	cfg.IdleTimeout = timeout
+	return cfg, nil
+}
+
+func loadCursorAPIConfig(piCfg PiAPIConfig) (CursorAPIConfig, error) {
+	cfg := CursorAPIConfig{
+		Enabled:   envBool("CURSOR_API_ENABLED", false),
+		Bin:       getenvDefault("CURSOR_SDK_BRIDGE_BIN", "cursor-sdk-bridge"),
+		APIKey:    strings.TrimSpace(os.Getenv("CURSOR_API_KEY")),
+		AuthToken: strings.TrimSpace(os.Getenv("CURSOR_AUTH_TOKEN")),
+	}
+	if !cfg.Enabled {
+		return cfg, nil
+	}
+
+	maxText := strings.TrimSpace(os.Getenv("CURSOR_MAX_SESSIONS"))
+	if maxText == "" && piCfg.MaxSessions > 0 {
+		cfg.MaxSessions = piCfg.MaxSessions
+	} else {
+		if maxText == "" {
+			maxText = strings.TrimSpace(os.Getenv("PI_API_MAX_SESSIONS"))
+		}
+		if maxText == "" {
+			maxText = "8"
+		}
+		parsed, err := strconv.Atoi(maxText)
+		if err != nil || parsed <= 0 {
+			return cfg, fmt.Errorf("CURSOR_MAX_SESSIONS must be a positive integer, got %q", maxText)
+		}
+		cfg.MaxSessions = parsed
+	}
+
+	idleText := strings.TrimSpace(os.Getenv("CURSOR_API_IDLE_TIMEOUT"))
+	if idleText == "" {
+		idleText = "30m"
+	}
+	timeout, err := time.ParseDuration(idleText)
+	if err != nil || timeout <= 0 {
+		return cfg, fmt.Errorf("CURSOR_API_IDLE_TIMEOUT must be a positive duration, got %q", idleText)
 	}
 	cfg.IdleTimeout = timeout
 	return cfg, nil

@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+// The ButterBox CursorService contract. Keep field names and numbers stable;
+// the Butter client consumes this surface over ConnectRPC.
+package butterbox.cursor.v1;
+
+option go_package = "github.com/orvice/butter-box/pkg/proto/butterbox/cursor/v1;cursorv1";
+
+// CursorService drives Cursor SDK Bridge sessions hosted on this ButterBox.
+//
+// A session maps 1:1 to a cursor-sdk-bridge child process while active. Model
+// inference always goes through Cursor's hosted API, so the box must run the
+// bridge with CURSOR_API_KEY in its environment; butter never stores that key.
+service CursorService {
+  // CreateSession spawns a bridge process for one Cursor agent session and
+  // returns its session ID.
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+
+  // SendMessage sends one prompt and returns after the Cursor agent finishes
+  // its turn. A box restart mid-run returns an error, never a stale answer.
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+
+  // AbortSession cancels the in-flight run, if any, and stops the bridge
+  // process. Session files stay on disk.
+  rpc AbortSession(AbortSessionRequest) returns (AbortSessionResponse);
+
+  // ListModels reports the Cursor model catalog. It is session-less: a
+  // transient bridge is started and stopped without consuming a session slot.
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+}
+
+message CreateSessionRequest {
+  // Optional display name.
+  string name = 1;
+  // Optional model ID. Empty uses the bridge default.
+  string model = 2;
+  // Agent mode: "agent" (default) or "plan".
+  string mode = 3;
+  // Working directory, absolute or relative to the box sandbox root.
+  string cwd = 4;
+}
+
+message CreateSessionResponse {
+  // Opaque session ID on the box (the bridge's agent ID).
+  string session_id = 1;
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string message = 2;
+  repeated ImageContent images = 3;
+}
+
+message SendMessageResponse {
+  // The agent's final text output after the turn ended.
+  string text = 1;
+}
+
+message AbortSessionRequest {
+  string session_id = 1;
+}
+
+message AbortSessionResponse {}
+
+message ListModelsRequest {}
+
+message ListModelsResponse {
+  repeated Model models = 1;
+}
+
+message Model {
+  string id = 1;
+  string name = 2;
+}
+
+message ImageContent {
+  // e.g. "image/png".
+  string mime_type = 1;
+  // Raw image bytes.
+  bytes data = 2;
+}
