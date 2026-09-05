@@ -172,7 +172,7 @@ pi uses its own model credentials (`~/.pi/agent` auth or provider environment va
 
 When `CURSOR_API_ENABLED=true`, ButterBox exposes the ConnectRPC `butterbox.cursor.v1.CursorService` at `/butterbox.cursor.v1.CursorService/`. It uses the same bearer-auth boundary as the MCP and Pi APIs, or `CURSOR_AUTH_TOKEN` when a dedicated token is configured. The service contract is defined in [`proto/butterbox/cursor/v1/cursor.proto`](proto/butterbox/cursor/v1/cursor.proto).
 
-The container includes the pinned `cursor-sdk-bridge` `v1.0.30` release for Linux amd64 and arm64. Each Cursor session owns one supervised bridge process. The bridge's durable state is retained under the ButterBox user's home directory when the process is stopped for idle timeout or aborted, and the next request resumes the agent by its returned `session_id`.
+The container includes the pinned `cursor-sdk-bridge` `v1.0.31` release for Linux amd64 and arm64. Each Cursor session owns one supervised bridge process. The bridge's durable state is retained under the ButterBox user's home directory when the process is stopped for idle timeout or aborted, and the next request resumes the agent by its returned `session_id`.
 
 `CURSOR_API_KEY` is required by the Cursor bridge for model and agent operations. It is passed explicitly to bridge SDK requests as well as the bridge environment, but is never returned in an RPC response or included in logs. A missing or invalid key returns `Unauthenticated` with a `google.rpc.ErrorInfo` detail whose reason is `CURSOR_API_KEY_MISSING_OR_INVALID`, distinct from an invalid ButterBox bearer token.
 
