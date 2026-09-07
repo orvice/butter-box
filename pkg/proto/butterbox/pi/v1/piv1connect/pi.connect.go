@@ -37,6 +37,8 @@ const (
 	PiServiceCreateSessionProcedure = "/butterbox.pi.v1.PiService/CreateSession"
 	// PiServiceListSessionsProcedure is the fully-qualified name of the PiService's ListSessions RPC.
 	PiServiceListSessionsProcedure = "/butterbox.pi.v1.PiService/ListSessions"
+	// PiServiceListEntriesProcedure is the fully-qualified name of the PiService's ListEntries RPC.
+	PiServiceListEntriesProcedure = "/butterbox.pi.v1.PiService/ListEntries"
 	// PiServiceGetSessionProcedure is the fully-qualified name of the PiService's GetSession RPC.
 	PiServiceGetSessionProcedure = "/butterbox.pi.v1.PiService/GetSession"
 	// PiServiceSendMessageProcedure is the fully-qualified name of the PiService's SendMessage RPC.
@@ -63,9 +65,16 @@ const (
 type PiServiceClient interface {
 	// CreateSession spawns a new pi session process.
 	CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error)
-	// ListSessions reports sessions currently held by this server (active
-	// processes only; historical sessions live in pi's session directory).
+	// ListSessions reports every session on this box, newest first: sessions
+	// with an active process plus inactive ones found in pi's session
+	// directory.
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
+	// ListEntries reports the session's entries — the transcript a chat client
+	// renders — re-attaching the session if it is not currently active. With
+	// after_cursor set only entries past that entry are returned, so a client
+	// refresh loop polls incrementally using the last entry id it has seen.
+	// During an in-flight run the listing grows as the run progresses.
+	ListEntries(context.Context, *connect.Request[v1.ListEntriesRequest]) (*connect.Response[v1.ListEntriesResponse], error)
 	// GetSession reports state and usage statistics for one session,
 	// re-attaching it if it is not currently active.
 	GetSession(context.Context, *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error)
@@ -121,6 +130,12 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			httpClient,
 			baseURL+PiServiceListSessionsProcedure,
 			connect.WithSchema(piServiceMethods.ByName("ListSessions")),
+			connect.WithClientOptions(opts...),
+		),
+		listEntries: connect.NewClient[v1.ListEntriesRequest, v1.ListEntriesResponse](
+			httpClient,
+			baseURL+PiServiceListEntriesProcedure,
+			connect.WithSchema(piServiceMethods.ByName("ListEntries")),
 			connect.WithClientOptions(opts...),
 		),
 		getSession: connect.NewClient[v1.GetSessionRequest, v1.GetSessionResponse](
@@ -184,6 +199,7 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 type piServiceClient struct {
 	createSession      *connect.Client[v1.CreateSessionRequest, v1.CreateSessionResponse]
 	listSessions       *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
+	listEntries        *connect.Client[v1.ListEntriesRequest, v1.ListEntriesResponse]
 	getSession         *connect.Client[v1.GetSessionRequest, v1.GetSessionResponse]
 	sendMessage        *connect.Client[v1.SendMessageRequest, v1.SendMessageResponse]
 	streamMessage      *connect.Client[v1.StreamMessageRequest, v1.StreamMessageResponse]
@@ -203,6 +219,11 @@ func (c *piServiceClient) CreateSession(ctx context.Context, req *connect.Reques
 // ListSessions calls butterbox.pi.v1.PiService.ListSessions.
 func (c *piServiceClient) ListSessions(ctx context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	return c.listSessions.CallUnary(ctx, req)
+}
+
+// ListEntries calls butterbox.pi.v1.PiService.ListEntries.
+func (c *piServiceClient) ListEntries(ctx context.Context, req *connect.Request[v1.ListEntriesRequest]) (*connect.Response[v1.ListEntriesResponse], error) {
+	return c.listEntries.CallUnary(ctx, req)
 }
 
 // GetSession calls butterbox.pi.v1.PiService.GetSession.
@@ -254,9 +275,16 @@ func (c *piServiceClient) DeleteSession(ctx context.Context, req *connect.Reques
 type PiServiceHandler interface {
 	// CreateSession spawns a new pi session process.
 	CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error)
-	// ListSessions reports sessions currently held by this server (active
-	// processes only; historical sessions live in pi's session directory).
+	// ListSessions reports every session on this box, newest first: sessions
+	// with an active process plus inactive ones found in pi's session
+	// directory.
 	ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error)
+	// ListEntries reports the session's entries — the transcript a chat client
+	// renders — re-attaching the session if it is not currently active. With
+	// after_cursor set only entries past that entry are returned, so a client
+	// refresh loop polls incrementally using the last entry id it has seen.
+	// During an in-flight run the listing grows as the run progresses.
+	ListEntries(context.Context, *connect.Request[v1.ListEntriesRequest]) (*connect.Response[v1.ListEntriesResponse], error)
 	// GetSession reports state and usage statistics for one session,
 	// re-attaching it if it is not currently active.
 	GetSession(context.Context, *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error)
@@ -308,6 +336,12 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 		PiServiceListSessionsProcedure,
 		svc.ListSessions,
 		connect.WithSchema(piServiceMethods.ByName("ListSessions")),
+		connect.WithHandlerOptions(opts...),
+	)
+	piServiceListEntriesHandler := connect.NewUnaryHandler(
+		PiServiceListEntriesProcedure,
+		svc.ListEntries,
+		connect.WithSchema(piServiceMethods.ByName("ListEntries")),
 		connect.WithHandlerOptions(opts...),
 	)
 	piServiceGetSessionHandler := connect.NewUnaryHandler(
@@ -370,6 +404,8 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 			piServiceCreateSessionHandler.ServeHTTP(w, r)
 		case PiServiceListSessionsProcedure:
 			piServiceListSessionsHandler.ServeHTTP(w, r)
+		case PiServiceListEntriesProcedure:
+			piServiceListEntriesHandler.ServeHTTP(w, r)
 		case PiServiceGetSessionProcedure:
 			piServiceGetSessionHandler.ServeHTTP(w, r)
 		case PiServiceSendMessageProcedure:
@@ -403,6 +439,10 @@ func (UnimplementedPiServiceHandler) CreateSession(context.Context, *connect.Req
 
 func (UnimplementedPiServiceHandler) ListSessions(context.Context, *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.ListSessions is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) ListEntries(context.Context, *connect.Request[v1.ListEntriesRequest]) (*connect.Response[v1.ListEntriesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.ListEntries is not implemented"))
 }
 
 func (UnimplementedPiServiceHandler) GetSession(context.Context, *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error) {

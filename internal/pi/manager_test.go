@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -262,6 +263,155 @@ func TestSubmitAndGetTurn(t *testing.T) {
 	}
 	if status.Running || status.Result == nil || status.Result.Text != "echo: quick two" {
 		t.Fatalf("second turn status = %+v", status)
+	}
+}
+
+func TestEntries(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// A fresh session has no entries.
+	res, err := m.Entries(ctx, info.ID, "")
+	if err != nil {
+		t.Fatalf("Entries empty: %v", err)
+	}
+	if len(res.Entries) != 0 || res.LeafID != "" || res.Running {
+		t.Fatalf("empty session entries = %+v", res)
+	}
+
+	if _, err := m.Send(ctx, info.ID, "one", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// Full transcript: the user and assistant message entries, oldest first.
+	res, err = m.Entries(ctx, info.ID, "")
+	if err != nil {
+		t.Fatalf("Entries full: %v", err)
+	}
+	if len(res.Entries) != 2 {
+		t.Fatalf("entries = %+v, want 2", res.Entries)
+	}
+	for _, e := range res.Entries {
+		if e.Type != "message" || e.ID == "" || !json.Valid(e.Raw) {
+			t.Fatalf("entry = %+v, want valid message entry", e)
+		}
+	}
+	if !strings.Contains(string(res.Entries[1].Raw), "echo: one") {
+		t.Fatalf("assistant entry = %s, want echoed text", res.Entries[1].Raw)
+	}
+	if res.LeafID != res.Entries[1].ID {
+		t.Fatalf("leaf = %q, want %q", res.LeafID, res.Entries[1].ID)
+	}
+	if res.Running {
+		t.Fatalf("running after settle, want false")
+	}
+
+	// Incremental poll: only entries past the cursor.
+	tail, err := m.Entries(ctx, info.ID, res.Entries[0].ID)
+	if err != nil {
+		t.Fatalf("Entries after cursor: %v", err)
+	}
+	if len(tail.Entries) != 1 || tail.Entries[0].ID != res.LeafID {
+		t.Fatalf("tail entries = %+v, want just the leaf", tail.Entries)
+	}
+
+	if _, err := m.Entries(ctx, info.ID, "no-such-entry"); !errors.Is(err, ErrBadCursor) {
+		t.Fatalf("Entries bad cursor = %v, want ErrBadCursor", err)
+	}
+
+	// Mid-run a listing reports running so a refresh loop keeps polling.
+	cursor, err := m.Submit(ctx, info.ID, "slow two", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	mid, err := m.Entries(ctx, info.ID, cursor)
+	if err != nil {
+		t.Fatalf("Entries mid-run: %v", err)
+	}
+	if !mid.Running {
+		t.Fatalf("mid-run entries = %+v, want running", mid)
+	}
+	if _, err := m.Turn(ctx, info.ID, cursor, 10*time.Second); err != nil {
+		t.Fatalf("Turn settle: %v", err)
+	}
+	done, err := m.Entries(ctx, info.ID, cursor)
+	if err != nil {
+		t.Fatalf("Entries after settle: %v", err)
+	}
+	if len(done.Entries) != 2 || done.Running {
+		t.Fatalf("settled entries = %+v, want 2 new entries and not running", done)
+	}
+}
+
+func TestListIncludesDiskSessions(t *testing.T) {
+	sessionDir := t.TempDir()
+	sub := filepath.Join(sessionDir, "--proj--")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSession := func(path, id, cwd string, age time.Duration) {
+		t.Helper()
+		header := fmt.Sprintf(`{"type":"session","version":3,"id":%q,"timestamp":"2026-01-01T00:00:00.000Z","cwd":%q}`, id, cwd)
+		if err := os.WriteFile(path, []byte(header+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mtime := time.Now().Add(-age)
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSession(filepath.Join(sessionDir, "a_disk-old.jsonl"), "disk-old", "/old/dir", 2*time.Hour)
+	newFile := filepath.Join(sub, "b_disk-new.jsonl")
+	writeSession(newFile, "disk-new", "/new/dir", time.Hour)
+	// A stale duplicate of disk-new: the newest file must win.
+	writeSession(filepath.Join(sessionDir, "c_disk-new.jsonl"), "disk-new", "/stale/dir", 3*time.Hour)
+	// A disk file for the active session must not produce a duplicate row.
+	writeSession(filepath.Join(sessionDir, "d_active.jsonl"), fakeSessionID, "/active/dir", time.Minute)
+	// Non-session files are ignored.
+	if err := os.WriteFile(filepath.Join(sessionDir, "junk.jsonl"), []byte(`{"type":"other"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4, SessionDir: sessionDir})
+	ctx := testCtx(t)
+
+	if _, err := m.Create(ctx, CreateOpts{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	infos, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var ids []string
+	for _, info := range infos {
+		ids = append(ids, info.ID)
+	}
+	// Newest first; the active session's reported file does not exist on
+	// disk, so its mtime is unknown and it sorts last.
+	want := []string{"disk-new", "disk-old", fakeSessionID}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+
+	byID := map[string]Info{}
+	for _, info := range infos {
+		byID[info.ID] = info
+	}
+	if !byID[fakeSessionID].Active {
+		t.Fatalf("active session = %+v, want Active", byID[fakeSessionID])
+	}
+	diskNew := byID["disk-new"]
+	if diskNew.Active || diskNew.Cwd != "/new/dir" || diskNew.File != newFile || diskNew.UpdatedAt.IsZero() {
+		t.Fatalf("disk-new = %+v", diskNew)
+	}
+	if byID["disk-old"].Cwd != "/old/dir" {
+		t.Fatalf("disk-old = %+v", byID["disk-old"])
 	}
 }
 

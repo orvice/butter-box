@@ -135,7 +135,9 @@ Each session maps to a supervised `pi --mode rpc` child process speaking pi's JS
 
 `CreateSession` accepts an optional `cwd` — the working directory for the pi process, absolute or relative to `SANDBOX_ROOT`. It must resolve inside the sandbox root and exist, or the call fails with `invalid_argument`; empty keeps the server's own working directory. The effective directory is reported back on the `Session` message, and re-attached sessions are respawned in the session's recorded cwd (read back from pi's session file header when needed).
 
-RPCs: `CreateSession`, `ListSessions`, `GetSession`, `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+RPCs: `CreateSession`, `ListSessions` (every session on the box, newest first: active processes plus inactive sessions found on disk, each flagged `active` and stamped `updated_at_unix`), `GetSession`, `ListEntries` (the session transcript — see below), `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+
+`ListEntries` is what a chat client renders from: it returns the session's entries verbatim as pi JSON (`message`, `model_change`, ... — each with its entry `id`), re-attaching the session if needed. Empty `after_cursor` returns the full transcript; passing the last entry id already seen (or a `SubmitMessage` turn cursor) returns only what came after, so a refresh loop polls incrementally. The response carries the current `leaf_id` (the next natural cursor) and `running` — during an in-flight run the listing grows as entries are recorded, so a polling client sees tool activity before the turn settles. An unknown cursor fails with `invalid_argument`.
 
 `GetAvailableModels` works with or without a session. With `session_id` set it asks that session's process (re-attaching it if idle), since a session's scoped model config may differ. With `session_id` empty it answers for the box: a short-lived `pi --mode rpc --no-session` process reads the catalog and is torn down, and the result is cached for five minutes so repeated dropdown loads cost one spawn. That transient process is outside the `PI_API_MAX_SESSIONS` accounting — it holds no session and lives for a single call — so a box at its session cap still answers catalog queries; if the transient process cannot start at all, the last known catalog is served rather than an error.
 
@@ -155,6 +157,12 @@ curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/SendMessage \
   -H 'Authorization: Bearer secret-token' \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"<id>","message":"What files are here?"}'
+
+# Render the transcript, then poll for new entries from the last seen id.
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/ListEntries \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<id>","after_cursor":"<last-entry-id>"}'
 
 # Populate a model dropdown and a cwd picker before any session exists.
 curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/GetAvailableModels \

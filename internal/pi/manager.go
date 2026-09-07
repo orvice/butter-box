@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,10 @@ type Info struct {
 	Streaming    bool
 	MessageCount int32
 	Cwd          string
+	// Active reports whether a pi process currently hosts the session.
+	Active bool
+	// UpdatedAt is the session file's modification time, zero when unknown.
+	UpdatedAt time.Time
 }
 
 // Stats is a cumulative session usage snapshot.
@@ -278,7 +283,10 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 		slog.String("session_file", s.file),
 		slog.String("cwd", cwd),
 	)
-	return infoWithCwd(state, cwd), nil
+	info := infoWithCwd(state, cwd)
+	info.Active = true
+	info.UpdatedAt = fileModTime(info.File)
+	return info, nil
 }
 
 // resolveCwd validates a caller-supplied working directory: it must resolve
@@ -291,7 +299,8 @@ func (m *Manager) resolveCwd(userPath string) (string, error) {
 	return resolved, nil
 }
 
-// List reports currently active sessions.
+// List reports every session on this box, newest first: active sessions from
+// their processes, inactive ones from pi's session directory.
 func (m *Manager) List(ctx context.Context) ([]Info, error) {
 	m.mu.Lock()
 	active := make([]*session, 0, len(m.sessions))
@@ -301,16 +310,44 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 	m.mu.Unlock()
 
 	infos := make([]Info, 0, len(active))
+	seen := make(map[string]bool, len(active))
 	for _, s := range active {
-		state, err := getState(ctx, s.proc)
-		if err != nil {
-			// Process may be mid-shutdown; report what we know.
-			infos = append(infos, Info{ID: s.id, File: s.file, Cwd: s.cwd})
+		seen[s.id] = true
+		info := Info{ID: s.id, File: s.file, Cwd: s.cwd}
+		if state, err := getState(ctx, s.proc); err == nil {
+			info = infoWithCwd(state, s.cwd)
+		} // else: process may be mid-shutdown; report what we know.
+		info.Active = true
+		info.UpdatedAt = fileModTime(info.File)
+		infos = append(infos, info)
+	}
+
+	for _, fs := range listFileSessions(m.sessionRoot()) {
+		if seen[fs.ID] {
 			continue
 		}
-		infos = append(infos, infoWithCwd(state, s.cwd))
+		infos = append(infos, Info{
+			ID:        fs.ID,
+			File:      fs.File,
+			Cwd:       fs.Cwd,
+			UpdatedAt: fs.ModTime,
+		})
 	}
+
+	sort.Slice(infos, func(i, j int) bool { return infos[i].UpdatedAt.After(infos[j].UpdatedAt) })
 	return infos, nil
+}
+
+// fileModTime returns path's modification time, zero when unknown.
+func fileModTime(path string) time.Time {
+	if path == "" {
+		return time.Time{}
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }
 
 // Get reports state and stats for one session, re-attaching if needed.
@@ -328,7 +365,10 @@ func (m *Manager) Get(ctx context.Context, id string) (Info, Stats, error) {
 		return Info{}, Stats{}, err
 	}
 	m.touch(s)
-	return infoWithCwd(state, s.cwd), stats, nil
+	info := infoWithCwd(state, s.cwd)
+	info.Active = true
+	info.UpdatedAt = fileModTime(info.File)
+	return info, stats, nil
 }
 
 // Send delivers one prompt and blocks until the run settles. onEvent, when
@@ -575,6 +615,80 @@ func (m *Manager) turnResult(ctx context.Context, proc *process, cursor string) 
 		return nil, err
 	}
 	return &SendResult{Text: text, StopReason: last.Message.StopReason, Stats: stats}, nil
+}
+
+// EntryRecord is one session entry, passed through verbatim.
+type EntryRecord struct {
+	ID   string
+	Type string
+	Raw  []byte
+}
+
+// EntriesResult is one Entries listing.
+type EntriesResult struct {
+	// Entries past the cursor, oldest first.
+	Entries []EntryRecord
+	// LeafID is the session's current leaf entry id, "" when the session has
+	// no entries.
+	LeafID string
+	// Running reports whether a run is in flight; more entries will appear.
+	Running bool
+}
+
+// Entries lists the session's entries after cursor (the full transcript when
+// cursor is ""), re-attaching the session if needed. During an in-flight run
+// the listing reflects the entries recorded so far.
+func (m *Manager) Entries(ctx context.Context, id, cursor string) (EntriesResult, error) {
+	s, err := m.attach(ctx, id)
+	if err != nil {
+		return EntriesResult{}, err
+	}
+
+	cmd := map[string]any{"type": "get_entries"}
+	if cursor != "" {
+		cmd["since"] = cursor
+	}
+	data, err := s.proc.callOK(ctx, cmd)
+	if err != nil {
+		// pi reports an unknown `since` id as "Entry not found: <id>".
+		if strings.Contains(err.Error(), "Entry not found") {
+			return EntriesResult{}, fmt.Errorf("%w: %s", ErrBadCursor, cursor)
+		}
+		return EntriesResult{}, err
+	}
+	var payload rawEntriesData
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return EntriesResult{}, fmt.Errorf("decode get_entries: %w", err)
+	}
+
+	out := EntriesResult{Entries: make([]EntryRecord, 0, len(payload.Entries))}
+	if payload.LeafID != nil {
+		out.LeafID = *payload.LeafID
+	}
+	for _, raw := range payload.Entries {
+		var head entryHead
+		if err := json.Unmarshal(raw, &head); err != nil {
+			return EntriesResult{}, fmt.Errorf("decode session entry: %w", err)
+		}
+		out.Entries = append(out.Entries, EntryRecord{ID: head.ID, Type: head.Type, Raw: raw})
+	}
+
+	// Running mirrors GetTurn's view: a detached submitted run or pi's own
+	// streaming flag.
+	m.mu.Lock()
+	running := s.turn != nil
+	m.mu.Unlock()
+	if !running {
+		state, err := getState(ctx, s.proc)
+		if err != nil {
+			return EntriesResult{}, err
+		}
+		running = state.IsStreaming
+	}
+	out.Running = running
+
+	m.touch(s)
+	return out, nil
 }
 
 // getLeafCursor returns the session's current leaf entry id, "" when the

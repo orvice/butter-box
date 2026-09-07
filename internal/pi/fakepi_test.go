@@ -305,11 +305,15 @@ func newFakeManager(t *testing.T) *Manager {
 }
 
 // newFakeManagerCfg is newFakeManager with caller-controlled Config; Bin is
-// always this test binary.
+// always this test binary, and SessionDir defaults to a temp dir so tests
+// never scan the developer's real pi session directory.
 func newFakeManagerCfg(t *testing.T, cfg Config) *Manager {
 	t.Helper()
 	t.Setenv("FAKE_PI", "1")
 	cfg.Bin = os.Args[0]
+	if cfg.SessionDir == "" {
+		cfg.SessionDir = t.TempDir()
+	}
 	m := NewManager(testLogger(t), cfg)
 	t.Cleanup(m.Stop)
 	return m
