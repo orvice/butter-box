@@ -11,9 +11,12 @@ RUN CGO_ENABLED=0 go build -o /out/butter-box .
 
 FROM ubuntu:24.04
 
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.8
 ARG NODE_MAJOR=22
-ARG LOKI_VERSION=3.7.6
+ARG LOKI_VERSION=3.7.7
+ARG CURSOR_SDK_BRIDGE_VERSION=1.0.31
+ARG CURSOR_SDK_BRIDGE_SHA256_AMD64=527cbebdc6aad4ea7d3026f49b4879e3e7f3d6e907c0598241863802b022c838
+ARG CURSOR_SDK_BRIDGE_SHA256_ARM64=c5b3dce52ba01f60b152861f008e8d2c931c0ba9fbf79a110ddea375ae40717b
 
 # Base CLI tools
 RUN apt-get update \
@@ -35,6 +38,26 @@ RUN apt-get update \
 		xz-utils \
 		zip \
 	&& rm -rf /var/lib/apt/lists/*
+
+# Cursor SDK Bridge (pinned release; the archive contains the self-contained
+# binary and its sdk.v1 manifest).
+RUN set -eux; \
+  case "$(dpkg --print-architecture)" in \
+    amd64) BRIDGE_ARCH=x64; BRIDGE_SHA256="${CURSOR_SDK_BRIDGE_SHA256_AMD64}" ;; \
+    arm64) BRIDGE_ARCH=arm64; BRIDGE_SHA256="${CURSOR_SDK_BRIDGE_SHA256_ARM64}" ;; \
+    *) echo "unsupported architecture for cursor-sdk-bridge: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+  esac; \
+  ASSET="cursor-sdk-bridge-standalone-linux-${BRIDGE_ARCH}.tar.gz"; \
+  URL="https://github.com/cursor/sdk-bridge/releases/download/v${CURSOR_SDK_BRIDGE_VERSION}/${ASSET}"; \
+  curl -fsSL "${URL}" -o "/tmp/${ASSET}"; \
+  echo "${BRIDGE_SHA256}  /tmp/${ASSET}" | sha256sum -c -; \
+  mkdir -p /tmp/cursor-sdk-bridge; \
+  tar -xzf "/tmp/${ASSET}" -C /tmp/cursor-sdk-bridge; \
+  test "$(jq -r .protocol /tmp/cursor-sdk-bridge/manifest.json)" = "sdk.v1"; \
+  test "$(jq -r .sdkVersion /tmp/cursor-sdk-bridge/manifest.json)" = "${CURSOR_SDK_BRIDGE_VERSION}"; \
+  test -x /tmp/cursor-sdk-bridge/bin/cursor-sdk-bridge; \
+  install -m 0755 /tmp/cursor-sdk-bridge/bin/cursor-sdk-bridge /usr/local/bin/cursor-sdk-bridge; \
+  rm -rf "/tmp/${ASSET}" /tmp/cursor-sdk-bridge
 
 # Python
 RUN apt-get update \

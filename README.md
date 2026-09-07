@@ -93,7 +93,7 @@ docker compose up -d
 
 - `MCP_ADDR`: HTTP listen address, default `:8080`
 - `MCP_HTTP_PATH`: MCP HTTP path, default `/mcp`
-- `MCP_AUTH_TOKEN`: **required.** Protects the MCP endpoint and the Pi API with `Authorization: Bearer <token>`. The server refuses to start without it — there is no unauthenticated mode.
+- `MCP_AUTH_TOKEN`: **required.** Protects the MCP endpoint and the Pi API with `Authorization: Bearer <token>` and is the default token for the Cursor API. The server refuses to start without it — there is no unauthenticated mode.
 - `SANDBOX_ROOT`: workspace root for file access and command execution, default current directory
 - `SANDBOX_SHELL`: shell used by the `ExecCommand` tool, default `bash`
 - `MCP_STATELESS`: enable stateless streamable HTTP mode, default `false`
@@ -106,6 +106,12 @@ docker compose up -d
 - `PI_API_IDLE_TIMEOUT`: stop a session process after this much inactivity (Go duration, session file is kept and re-attached on next use), default `30m`
 - `PI_BIN`: pi executable, default `pi`
 - `PI_SESSION_DIR`: override pi's session storage directory (passed as `--session-dir`)
+- `CURSOR_API_ENABLED`: expose the ConnectRPC Cursor session API, default `false`
+- `CURSOR_API_KEY`: Cursor API key passed to `cursor-sdk-bridge`; never returned by ButterBox
+- `CURSOR_AUTH_TOKEN`: optional bearer token dedicated to the Cursor API; defaults to `MCP_AUTH_TOKEN`
+- `CURSOR_MAX_SESSIONS`: cap on active Cursor bridge processes, default `PI_API_MAX_SESSIONS` or `8`
+- `CURSOR_API_IDLE_TIMEOUT`: stop an idle Cursor bridge while retaining agent state, default `30m`
+- `CURSOR_SDK_BRIDGE_BIN`: bridge executable, default `cursor-sdk-bridge`
 
 ## Pi Web
 
@@ -162,7 +168,31 @@ curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/ListDirectories \
 
 pi uses its own model credentials (`~/.pi/agent` auth or provider environment variables such as `ANTHROPIC_API_KEY`); make sure they are present in the container environment or persisted home volume.
 
-Regenerate the ConnectRPC code after editing the proto with `buf generate` (config in `buf.gen.yaml`, lint with `buf lint`).
+## Cursor API
+
+When `CURSOR_API_ENABLED=true`, ButterBox exposes the ConnectRPC `butterbox.cursor.v1.CursorService` at `/butterbox.cursor.v1.CursorService/`. It uses the same bearer-auth boundary as the MCP and Pi APIs, or `CURSOR_AUTH_TOKEN` when a dedicated token is configured. The service contract is defined in [`proto/butterbox/cursor/v1/cursor.proto`](proto/butterbox/cursor/v1/cursor.proto).
+
+The container includes the pinned `cursor-sdk-bridge` `v1.0.31` release for Linux amd64 and arm64. Each Cursor session owns one supervised bridge process. The bridge's durable state is retained under the ButterBox user's home directory when the process is stopped for idle timeout or aborted, and the next request resumes the agent by its returned `session_id`.
+
+`CURSOR_API_KEY` is required by the Cursor bridge for model and agent operations. It is passed explicitly to bridge SDK requests as well as the bridge environment, but is never returned in an RPC response or included in logs. A missing or invalid key returns `Unauthenticated` with a `google.rpc.ErrorInfo` detail whose reason is `CURSOR_API_KEY_MISSING_OR_INVALID`, distinct from an invalid ButterBox bearer token.
+
+The service supports `CreateSession`, `SendMessage`, `AbortSession`, and session-less `ListModels`. `SendMessage` waits for the bridge's terminal run result and returns only final assistant text. Inline image bytes and MIME types are forwarded unchanged. A failed or cancelled run, bridge crash, busy session, capacity limit, or unknown session is returned as an explicit RPC error rather than a stale answer.
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8080/butterbox.cursor.v1.CursorService/CreateSession \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"cursor-task","model":"composer-2","mode":"agent","cwd":"my-repo"}'
+
+curl -X POST http://127.0.0.1:8080/butterbox.cursor.v1.CursorService/ListModels \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Regenerate the ConnectRPC code after editing a proto with `buf generate` (config in `buf.gen.yaml`, lint with `buf lint`).
 
 ## MCP Server JSON Example
 
