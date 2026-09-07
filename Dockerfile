@@ -1,4 +1,4 @@
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 
 WORKDIR /src
 
@@ -11,8 +11,8 @@ RUN CGO_ENABLED=0 go build -o /out/butter-box .
 
 FROM ubuntu:24.04
 
-ARG GO_VERSION=1.26.8
-ARG NODE_MAJOR=22
+ARG GO_VERSION=1.27.1
+ARG NODE_MAJOR=24
 ARG LOKI_VERSION=3.7.7
 ARG CURSOR_SDK_BRIDGE_VERSION=1.0.31
 ARG CURSOR_SDK_BRIDGE_SHA256_AMD64=527cbebdc6aad4ea7d3026f49b4879e3e7f3d6e907c0598241863802b022c838
@@ -83,6 +83,8 @@ RUN npm install -g \
 		@earendil-works/pi-coding-agent \
 		@googleworkspace/cli \
 		@openai/codex \
+		corepack \
+		npm \
 		opencode-ai \
 	&& npm cache clean --force
 
