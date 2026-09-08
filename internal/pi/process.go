@@ -211,6 +211,12 @@ func (p *process) callOK(ctx context.Context, cmd map[string]any) (json.RawMessa
 	return resp.Data, nil
 }
 
+func (p *process) exited() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exitErr != nil
+}
+
 func (p *process) exitError() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

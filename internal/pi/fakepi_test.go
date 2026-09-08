@@ -2,6 +2,7 @@ package pi
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -33,10 +35,14 @@ type fakePi struct {
 	lastPrompt string
 	uiResp     chan map[string]any
 	abortCh    chan struct{}
+	streaming  atomic.Bool
 
 	entriesMu sync.Mutex
 	entries   []map[string]any
 	nextEntry int
+
+	// Test-only gate: hold one entries response after taking its snapshot.
+	entriesHeld bool
 }
 
 // appendEntry records one session entry, mimicking pi's entry log.
@@ -78,6 +84,14 @@ func (f *fakePi) entriesSince(since any) ([]map[string]any, any, bool) {
 
 func fakePiMain() {
 	recordSpawn()
+	if gate := os.Getenv("FAKE_PI_START_GATE"); gate != "" {
+		if err := os.WriteFile(filepath.Join(gate, "captured"), nil, 0o600); err != nil {
+			panic(err)
+		}
+		if err := waitForFakeFile(context.Background(), filepath.Join(gate, "release")); err != nil {
+			panic(err)
+		}
+	}
 
 	f := &fakePi{
 		out:       bufio.NewWriter(os.Stdout),
@@ -138,7 +152,7 @@ func (f *fakePi) handle(cmd map[string]any) {
 	case "get_state":
 		f.respond(cmd, map[string]any{
 			"model":        map[string]any{"id": "fake-model", "provider": "fake"},
-			"isStreaming":  false,
+			"isStreaming":  f.streaming.Load(),
 			"sessionFile":  "/tmp/" + f.sessionID + ".jsonl",
 			"sessionId":    f.sessionID,
 			"sessionName":  "fake",
@@ -160,7 +174,22 @@ func (f *fakePi) handle(cmd map[string]any) {
 			})
 			return
 		}
-		f.respond(cmd, map[string]any{"entries": entries, "leafId": leaf})
+		data := map[string]any{"entries": entries, "leafId": leaf}
+		gate := os.Getenv("FAKE_PI_ENTRIES_GATE")
+		if _, err := os.Stat(filepath.Join(gate, "armed")); gate != "" && err == nil && !f.entriesHeld {
+			f.entriesHeld = true
+			if err := os.WriteFile(filepath.Join(gate, "captured"), nil, 0o600); err != nil {
+				panic(err)
+			}
+			go func() {
+				if err := waitForFakeFile(context.Background(), filepath.Join(gate, "release")); err != nil {
+					panic(err)
+				}
+				f.respond(cmd, data)
+			}()
+			return
+		}
+		f.respond(cmd, data)
 	case "get_available_models":
 		f.respond(cmd, map[string]any{
 			"models": []map[string]any{
@@ -204,6 +233,10 @@ func (f *fakePi) handle(cmd map[string]any) {
 		f.uiResp <- cmd
 	case "prompt":
 		f.lastPrompt, _ = cmd["message"].(string)
+		if f.lastPrompt == "crash" {
+			os.Exit(1)
+		}
+		f.streaming.Store(true)
 		f.respond(cmd, nil)
 		go f.run(f.lastPrompt)
 	default:
@@ -219,6 +252,10 @@ func (f *fakePi) handle(cmd map[string]any) {
 
 // run emits one agent run's event stream.
 func (f *fakePi) run(prompt string) {
+	defer func() {
+		f.streaming.Store(false)
+		f.emit(map[string]any{"type": "agent_settled"})
+	}()
 	f.emit(map[string]any{"type": "agent_start"})
 	f.appendEntry(map[string]any{
 		"type": "message",
@@ -239,8 +276,13 @@ func (f *fakePi) run(prompt string) {
 		})
 		resp := <-f.uiResp
 		if resp["cancelled"] != true {
-			f.emit(map[string]any{"type": "agent_settled", "note": "unexpected ui answer"})
 			return
+		}
+	}
+
+	if prompt == "gated run" {
+		if err := waitForFakeFile(context.Background(), filepath.Join(os.Getenv("FAKE_PI_ENTRIES_GATE"), "finish")); err != nil {
+			panic(err)
 		}
 	}
 
@@ -248,7 +290,6 @@ func (f *fakePi) run(prompt string) {
 		select {
 		case <-time.After(2 * time.Second):
 		case <-f.abortCh:
-			f.emit(map[string]any{"type": "agent_settled"})
 			return
 		}
 	}
@@ -275,7 +316,40 @@ func (f *fakePi) run(prompt string) {
 	})
 	f.emit(map[string]any{"type": "turn_end"})
 	f.emit(map[string]any{"type": "agent_end", "willRetry": false})
-	f.emit(map[string]any{"type": "agent_settled"})
+}
+
+// fakeGateSetup controls the fake at process/RPC boundaries without adding
+// hooks to production code. All gate files live in the test's temporary directory.
+func fakeGateSetup(t *testing.T, envName string) (signal func(string), wait func(string)) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv(envName, dir)
+	ctx := testCtx(t)
+	return func(name string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, func(name string) {
+			t.Helper()
+			if err := waitForFakeFile(ctx, filepath.Join(dir, name)); err != nil {
+				t.Fatalf("wait for fake pi %s: %v", name, err)
+			}
+		}
+}
+
+func waitForFakeFile(ctx context.Context, path string) error {
+	tick := time.Tick(time.Millisecond)
+	for {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick:
+		}
+	}
 }
 
 // recordSpawn appends the fake's working directory and argv to the file named

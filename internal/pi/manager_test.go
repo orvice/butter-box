@@ -28,7 +28,7 @@ func (w testWriter) Write(p []byte) (int, error) {
 
 func testCtx(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -179,7 +179,7 @@ func TestAttachUnknownSession(t *testing.T) {
 }
 
 func TestReattachKnownSession(t *testing.T) {
-	m := newFakeManager(t)
+	m := newFakeManagerCfg(t, Config{MaxSessions: 1})
 	ctx := testCtx(t)
 
 	info, _, err := m.Get(ctx, "known-abc123")
@@ -348,6 +348,101 @@ func TestEntries(t *testing.T) {
 	}
 }
 
+func TestEntriesPollingAcrossSettlement(t *testing.T) {
+	for _, mode := range []string{"submit", "send", "concurrent_send"} {
+		t.Run(mode, func(t *testing.T) {
+			signal, wait := fakeGateSetup(t, "FAKE_PI_ENTRIES_GATE")
+			m := newFakeManager(t)
+			ctx := testCtx(t)
+			info, err := m.Create(ctx, CreateOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var cursor string
+			var sent chan error
+			start := func() {
+				t.Helper()
+				if mode == "submit" {
+					cursor, err = m.Submit(ctx, info.ID, "gated run", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				sent = make(chan error, 1)
+				started := make(chan struct{})
+				go func() {
+					_, err := m.Send(ctx, info.ID, "gated run", nil, func(eventType string, _ []byte) error {
+						if eventType == "agent_start" {
+							close(started)
+						}
+						return nil
+					})
+					sent <- err
+				}()
+				select {
+				case <-started:
+				case err := <-sent:
+					t.Fatalf("Send ended before starting: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			if mode != "concurrent_send" {
+				start()
+			}
+
+			// Hold the snapshot's response until the run has settled. The
+			// concurrent case also starts the run after the snapshot was taken.
+			signal("armed")
+			type pollResult struct {
+				EntriesResult
+				err error
+			}
+			polled := make(chan pollResult, 1)
+			go func() {
+				res, err := m.Entries(ctx, info.ID, cursor)
+				polled <- pollResult{res, err}
+			}()
+			wait("captured")
+			if mode == "concurrent_send" {
+				start()
+			}
+			signal("finish")
+			if mode == "submit" {
+				settled, err := m.Turn(ctx, info.ID, cursor, 10*time.Second)
+				if err != nil || settled.Running || settled.Result == nil {
+					t.Fatalf("settle turn = %+v, %v", settled, err)
+				}
+			} else if err := <-sent; err != nil {
+				t.Fatal(err)
+			}
+			signal("release")
+
+			first := <-polled
+			if first.err != nil {
+				t.Fatal(first.err)
+			}
+			res := first.EntriesResult
+			var transcript []EntryRecord
+			for {
+				transcript = append(transcript, res.Entries...)
+				if !res.Running {
+					break
+				}
+				res, err = m.Entries(ctx, info.ID, res.LeafID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(transcript) != 2 || !strings.Contains(string(transcript[1].Raw), "echo: gated run") {
+				t.Fatalf("polling stopped before the final reply: got %d entries", len(transcript))
+			}
+		})
+	}
+}
+
 func TestListIncludesDiskSessions(t *testing.T) {
 	sessionDir := t.TempDir()
 	sub := filepath.Join(sessionDir, "--proj--")
@@ -412,6 +507,42 @@ func TestListIncludesDiskSessions(t *testing.T) {
 	}
 	if byID["disk-old"].Cwd != "/old/dir" {
 		t.Fatalf("disk-old = %+v", byID["disk-old"])
+	}
+}
+
+func TestListAfterProcessExit(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	const id = "known-crashed-session"
+	file := filepath.Join(dir, "2026-01-01T00-00-00-000Z_"+id+".jsonl")
+	header := fmt.Sprintf("{\"type\":\"session\",\"version\":3,\"id\":%q,\"cwd\":%q}\n", id, cwd)
+	if err := os.WriteFile(file, []byte(header), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := newFakeManagerCfg(t, Config{SessionDir: dir})
+	ctx := testCtx(t)
+	if _, _, err := m.Get(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send(ctx, id, "crash", nil, nil); !errors.Is(err, errProcessExited) {
+		t.Fatalf("Send to crashing process = %v, want process exit", err)
+	}
+
+	infos, err := m.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Active {
+		t.Fatalf("List after process exit = %+v, want one inactive session", infos)
+	}
+	if infos[0].File != file || infos[0].Cwd != cwd || infos[0].UpdatedAt.IsZero() {
+		t.Fatalf("inactive session = %+v, want metadata from disk", infos[0])
+	}
+
+	// Listing must not leave the dead process in the attach cache.
+	info, _, err := m.Get(ctx, id)
+	if err != nil || !info.Active {
+		t.Fatalf("Get after process exit = %+v, %v, want re-attached session", info, err)
 	}
 }
 
@@ -741,6 +872,62 @@ func TestFindSessionCwd(t *testing.T) {
 	}
 	if got := findSessionCwd(root, "missing"); got != "" {
 		t.Fatalf("findSessionCwd missing = %q, want empty", got)
+	}
+}
+
+func TestCapacityRecoversAfterProcessExit(t *testing.T) {
+	for _, operation := range []string{"create", "attach"} {
+		t.Run(operation, func(t *testing.T) {
+			m := newFakeManagerCfg(t, Config{MaxSessions: 1})
+			ctx := testCtx(t)
+			info, err := m.Create(ctx, CreateOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Send(ctx, info.ID, "crash", nil, nil); !errors.Is(err, errProcessExited) {
+				t.Fatalf("Send to crashing process = %v, want process exit", err)
+			}
+
+			switch operation {
+			case "create":
+				if _, err := m.Create(ctx, CreateOpts{}); err != nil {
+					t.Fatalf("Create after process exit: %v", err)
+				}
+			case "attach":
+				if _, _, err := m.Get(ctx, "known-after-crash"); err != nil {
+					t.Fatalf("Get after process exit: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestConcurrentCreateSessionLimit(t *testing.T) {
+	signal, wait := fakeGateSetup(t, "FAKE_PI_START_GATE")
+	m := newFakeManagerCfg(t, Config{MaxSessions: 1})
+
+	type createResult struct {
+		info Info
+		err  error
+	}
+	first := make(chan createResult, 1)
+	ctx := testCtx(t)
+	go func() {
+		info, err := m.Create(ctx, CreateOpts{})
+		first <- createResult{info, err}
+	}()
+	wait("captured")
+
+	secondCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	_, secondErr := m.Create(secondCtx, CreateOpts{})
+	cancel()
+	signal("release")
+	created := <-first
+	if created.err != nil || created.info.ID == "" {
+		t.Fatalf("first Create = %+v", created)
+	}
+	if !errors.Is(secondErr, ErrTooManySessions) {
+		t.Fatalf("concurrent Create = %v, want ErrTooManySessions", secondErr)
 	}
 }
 

@@ -92,15 +92,9 @@ type entryData struct {
 	} `json:"message"`
 }
 
-// entriesData mirrors get_entries' response data.
+// entriesData mirrors get_entries' response data while keeping each entry
+// verbatim for callers that pass it through.
 type entriesData struct {
-	Entries []entryData `json:"entries"`
-	LeafID  *string     `json:"leafId"`
-}
-
-// rawEntriesData mirrors get_entries' response data while keeping each entry
-// verbatim, for passthrough to clients.
-type rawEntriesData struct {
 	Entries []json.RawMessage `json:"entries"`
 	LeafID  *string           `json:"leafId"`
 }

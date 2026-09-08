@@ -134,6 +134,7 @@ type session struct {
 	proc     *process
 	runSlot  chan struct{} // capacity 1: holding the token = running a prompt
 	turn     *turnState    // guarded by Manager.mu; non-nil while a submitted run is in flight
+	runEpoch uint64        // guarded by Manager.mu; advances whenever a prompt reserves the slot
 	lastUsed time.Time
 }
 
@@ -158,6 +159,7 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	inflight map[string]chan struct{} // attach singleflight, keyed by session ID
+	creating int                      // Create reservations not published in sessions yet
 	cwds     map[string]string        // session ID -> cwd, survives idle-stop
 	stopped  bool
 
@@ -228,7 +230,17 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 	}
 	args = m.appendSessionDir(args)
 
-	proc, err := m.spawn(args, spawnDir)
+	if err := m.reserveCreate(); err != nil {
+		return Info{}, err
+	}
+	reserved := true
+	defer func() {
+		if reserved {
+			m.releaseCreateReservation()
+		}
+	}()
+
+	proc, err := startProcess(m.logger, m.cfg.Bin, args, spawnDir)
 	if err != nil {
 		return Info{}, err
 	}
@@ -263,6 +275,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 	}
 
 	m.mu.Lock()
+	m.creating--
+	reserved = false
 	if m.stopped {
 		m.mu.Unlock()
 		proc.stop()
@@ -312,11 +326,15 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 	infos := make([]Info, 0, len(active))
 	seen := make(map[string]bool, len(active))
 	for _, s := range active {
-		seen[s.id] = true
+		// Preserve known fields when a live process is transiently unavailable.
 		info := Info{ID: s.id, File: s.file, Cwd: s.cwd}
 		if state, err := getState(ctx, s.proc); err == nil {
 			info = infoWithCwd(state, s.cwd)
-		} // else: process may be mid-shutdown; report what we know.
+		}
+		if !m.sessionIsActive(s) {
+			continue
+		}
+		seen[s.id] = true
 		info.Active = true
 		info.UpdatedAt = fileModTime(info.File)
 		infos = append(infos, info)
@@ -380,15 +398,10 @@ func (m *Manager) Send(ctx context.Context, id, message string, images []ImageIn
 		return SendResult{}, err
 	}
 
-	select {
-	case s.runSlot <- struct{}{}:
-	default:
+	if !m.acquireRun(s) {
 		return SendResult{}, ErrBusy
 	}
-	defer func() {
-		<-s.runSlot
-		m.touch(s)
-	}()
+	defer m.releaseRun(s)
 
 	sub := s.proc.subscribe()
 	defer sub.Cancel()
@@ -431,14 +444,8 @@ func (m *Manager) Submit(ctx context.Context, id, message string, images []Image
 		return "", err
 	}
 
-	select {
-	case s.runSlot <- struct{}{}:
-	default:
+	if !m.acquireRun(s) {
 		return "", ErrBusy
-	}
-	release := func() {
-		<-s.runSlot
-		m.touch(s)
 	}
 
 	// The setup calls run on their own timeout, not the request context: once
@@ -449,7 +456,7 @@ func (m *Manager) Submit(ctx context.Context, id, message string, images []Image
 
 	cursor, err := getLeafCursor(setupCtx, s.proc)
 	if err != nil {
-		release()
+		m.releaseRun(s)
 		return "", err
 	}
 
@@ -465,7 +472,7 @@ func (m *Manager) Submit(ctx context.Context, id, message string, images []Image
 	}
 	if _, err := s.proc.callOK(setupCtx, cmd); err != nil {
 		sub.Cancel()
-		release()
+		m.releaseRun(s)
 		return "", err
 	}
 
@@ -493,9 +500,8 @@ func (m *Manager) finishDetached(s *session, t *turnState, sub *subscription) {
 			s.turn = nil
 		}
 		m.mu.Unlock()
+		m.releaseRun(s)
 		close(t.done)
-		<-s.runSlot
-		m.touch(s)
 	}()
 	defer sub.Cancel()
 
@@ -576,31 +582,24 @@ func (m *Manager) Turn(ctx context.Context, id, cursor string, wait time.Duratio
 // turnResult reads the entries after cursor and extracts the turn's outcome
 // from the last assistant message, or nil when the turn produced none.
 func (m *Manager) turnResult(ctx context.Context, proc *process, cursor string) (*SendResult, error) {
-	cmd := map[string]any{"type": "get_entries"}
-	if cursor != "" {
-		cmd["since"] = cursor
-	}
-	data, err := proc.callOK(ctx, cmd)
+	payload, err := getEntries(ctx, proc, cursor)
 	if err != nil {
-		// pi reports an unknown `since` id as "Entry not found: <id>".
-		if strings.Contains(err.Error(), "Entry not found") {
-			return nil, fmt.Errorf("%w: %s", ErrBadCursor, cursor)
-		}
 		return nil, err
 	}
-	var payload entriesData
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, fmt.Errorf("decode get_entries: %w", err)
-	}
 
-	var last *entryData
-	for i := range payload.Entries {
-		e := &payload.Entries[i]
-		if e.Type == "message" && e.Message.Role == "assistant" {
-			last = e
+	var last entryData
+	found := false
+	for _, raw := range payload.Entries {
+		var entry entryData
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil, fmt.Errorf("decode session entry: %w", err)
+		}
+		if entry.Type == "message" && entry.Message.Role == "assistant" {
+			last = entry
+			found = true
 		}
 	}
-	if last == nil {
+	if !found {
 		return nil, nil
 	}
 
@@ -644,21 +643,24 @@ func (m *Manager) Entries(ctx context.Context, id, cursor string) (EntriesResult
 		return EntriesResult{}, err
 	}
 
-	cmd := map[string]any{"type": "get_entries"}
-	if cursor != "" {
-		cmd["since"] = cursor
-	}
-	data, err := s.proc.callOK(ctx, cmd)
-	if err != nil {
-		// pi reports an unknown `since` id as "Entry not found: <id>".
-		if strings.Contains(err.Error(), "Entry not found") {
-			return EntriesResult{}, fmt.Errorf("%w: %s", ErrBadCursor, cursor)
+	// Sample running before the transcript: a run that settles while the
+	// snapshot is in flight must not make an incomplete snapshot terminal.
+	// The slot also covers Send and prompt setup, before pi starts streaming.
+	m.mu.Lock()
+	epoch := s.runEpoch
+	running := len(s.runSlot) != 0
+	m.mu.Unlock()
+	if !running {
+		state, err := getState(ctx, s.proc)
+		if err != nil {
+			return EntriesResult{}, err
 		}
-		return EntriesResult{}, err
+		running = state.IsStreaming
 	}
-	var payload rawEntriesData
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return EntriesResult{}, fmt.Errorf("decode get_entries: %w", err)
+
+	payload, err := getEntries(ctx, s.proc, cursor)
+	if err != nil {
+		return EntriesResult{}, err
 	}
 
 	out := EntriesResult{Entries: make([]EntryRecord, 0, len(payload.Entries))}
@@ -673,34 +675,52 @@ func (m *Manager) Entries(ctx context.Context, id, cursor string) (EntriesResult
 		out.Entries = append(out.Entries, EntryRecord{ID: head.ID, Type: head.Type, Raw: raw})
 	}
 
-	// Running mirrors GetTurn's view: a detached submitted run or pi's own
-	// streaming flag.
+	// A concurrent prompt may start AND finish during get_entries. Comparing
+	// the epoch catches that case even when both running samples are idle.
 	m.mu.Lock()
-	running := s.turn != nil
+	out.Running = running || len(s.runSlot) != 0 || s.runEpoch != epoch
 	m.mu.Unlock()
-	if !running {
-		state, err := getState(ctx, s.proc)
-		if err != nil {
-			return EntriesResult{}, err
-		}
-		running = state.IsStreaming
-	}
-	out.Running = running
 
 	m.touch(s)
 	return out, nil
 }
 
-// getLeafCursor returns the session's current leaf entry id, "" when the
-// session has no entries yet.
-func getLeafCursor(ctx context.Context, proc *process) (string, error) {
-	data, err := proc.callOK(ctx, map[string]any{"type": "get_entries"})
+// getEntries reads entries after cursor and maps pi's string error to the
+// manager's stable cursor error.
+func getEntries(ctx context.Context, proc *process, cursor string) (entriesData, error) {
+	cmd := map[string]any{"type": "get_entries"}
+	if cursor != "" {
+		cmd["since"] = cursor
+	}
+	data, err := proc.callOK(ctx, cmd)
 	if err != nil {
-		return "", err
+		// pi reports an unknown `since` id as "Entry not found: <id>".
+		if strings.Contains(err.Error(), "Entry not found") {
+			return entriesData{}, fmt.Errorf("%w: %s", ErrBadCursor, cursor)
+		}
+		return entriesData{}, err
 	}
 	var payload entriesData
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return "", fmt.Errorf("decode get_entries: %w", err)
+		return entriesData{}, fmt.Errorf("decode get_entries: %w", err)
+	}
+	return payload, nil
+}
+
+// getLeafCursor returns the session's current leaf entry id, "" when the
+// session has no entries yet.
+func getLeafCursor(ctx context.Context, proc *process) (string, error) {
+	payload, err := getEntries(ctx, proc, "")
+	if err != nil {
+		return "", err
+	}
+	// Preserve Submit's validation of the complete response even though it
+	// only consumes leafId; other callers intentionally pass entries through.
+	for _, raw := range payload.Entries {
+		var entry entryData
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return "", fmt.Errorf("decode session entry: %w", err)
+		}
 	}
 	if payload.LeafID == nil {
 		return "", nil
@@ -953,6 +973,7 @@ func (m *Manager) attach(ctx context.Context, id string) (*session, error) {
 			m.mu.Unlock()
 			return nil, errors.New("manager stopped")
 		}
+		m.pruneExitedSessionsLocked()
 		if s, ok := m.sessions[id]; ok {
 			m.mu.Unlock()
 			return s, nil
@@ -966,6 +987,10 @@ func (m *Manager) attach(ctx context.Context, id string) (*session, error) {
 				return nil, ctx.Err()
 			}
 		}
+		if len(m.sessions)+len(m.inflight)+m.creating >= m.cfg.MaxSessions {
+			m.mu.Unlock()
+			return nil, ErrTooManySessions
+		}
 		wait := make(chan struct{})
 		m.inflight[id] = wait
 		m.mu.Unlock()
@@ -975,12 +1000,19 @@ func (m *Manager) attach(ctx context.Context, id string) (*session, error) {
 		m.mu.Lock()
 		delete(m.inflight, id)
 		if err == nil {
-			m.sessions[id] = s
+			if m.stopped {
+				err = errors.New("manager stopped")
+			} else {
+				m.sessions[id] = s
+			}
 		}
 		m.mu.Unlock()
 		close(wait)
 
 		if err != nil {
+			if s != nil {
+				s.proc.stop()
+			}
 			return nil, err
 		}
 		return s, nil
@@ -1003,7 +1035,8 @@ func (m *Manager) reattach(ctx context.Context, id string) (*session, error) {
 	}
 
 	args := m.appendSessionDir([]string{"--mode", "rpc", "--session", id})
-	proc, err := m.spawn(args, cwd)
+	// attach reserved capacity in m.inflight before calling reattach.
+	proc, err := startProcess(m.logger, m.cfg.Bin, args, cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -1066,14 +1099,43 @@ func (m *Manager) sessionRoot() string {
 	return filepath.Join(home, ".pi", "agent", "sessions")
 }
 
-func (m *Manager) spawn(args []string, dir string) (*process, error) {
+// sessionIsActive verifies that s is still the cached, running process. It
+// removes exited processes so callers can fall back to or re-attach from disk.
+func (m *Manager) sessionIsActive(s *session) bool {
 	m.mu.Lock()
-	if len(m.sessions)+len(m.inflight) >= m.cfg.MaxSessions {
-		m.mu.Unlock()
-		return nil, ErrTooManySessions
+	defer m.mu.Unlock()
+	m.pruneExitedSessionsLocked()
+	return m.sessions[s.id] == s
+}
+
+// pruneExitedSessionsLocked keeps dead children out of active-session and
+// capacity accounting. The caller must hold m.mu.
+func (m *Manager) pruneExitedSessionsLocked() {
+	for id, s := range m.sessions {
+		if s.proc != nil && s.proc.exited() {
+			delete(m.sessions, id)
+		}
 	}
+}
+
+func (m *Manager) reserveCreate() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stopped {
+		return errors.New("manager stopped")
+	}
+	m.pruneExitedSessionsLocked()
+	if len(m.sessions)+len(m.inflight)+m.creating >= m.cfg.MaxSessions {
+		return ErrTooManySessions
+	}
+	m.creating++
+	return nil
+}
+
+func (m *Manager) releaseCreateReservation() {
+	m.mu.Lock()
+	m.creating--
 	m.mu.Unlock()
-	return startProcess(m.logger, m.cfg.Bin, args, dir)
 }
 
 func (m *Manager) appendSessionDir(args []string) []string {
@@ -1081,6 +1143,27 @@ func (m *Manager) appendSessionDir(args []string) []string {
 		args = append(args, "--session-dir", m.cfg.SessionDir)
 	}
 	return args
+}
+
+// acquireRun serializes prompt starts with Entries' epoch snapshots.
+func (m *Manager) acquireRun(s *session) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case s.runSlot <- struct{}{}:
+		s.runEpoch++
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseRun makes the slot available at the same linearization boundary.
+func (m *Manager) releaseRun(s *session) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	<-s.runSlot
+	s.lastUsed = time.Now()
 }
 
 func (m *Manager) touch(s *session) {
