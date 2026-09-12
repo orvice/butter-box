@@ -46,6 +46,25 @@ func (s *Service) ListSessions(ctx context.Context, _ *connect.Request[piv1.List
 	return connect.NewResponse(resp), nil
 }
 
+func (s *Service) ListEntries(ctx context.Context, req *connect.Request[piv1.ListEntriesRequest]) (*connect.Response[piv1.ListEntriesResponse], error) {
+	result, err := s.manager.Entries(ctx, req.Msg.GetSessionId(), req.Msg.GetAfterCursor())
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	resp := &piv1.ListEntriesResponse{
+		LeafId:  result.LeafID,
+		Running: result.Running,
+	}
+	for _, e := range result.Entries {
+		resp.Entries = append(resp.Entries, &piv1.Entry{
+			Id:          e.ID,
+			Type:        e.Type,
+			PayloadJson: string(e.Raw),
+		})
+	}
+	return connect.NewResponse(resp), nil
+}
+
 func (s *Service) GetSession(ctx context.Context, req *connect.Request[piv1.GetSessionRequest]) (*connect.Response[piv1.GetSessionResponse], error) {
 	info, stats, err := s.manager.Get(ctx, req.Msg.GetSessionId())
 	if err != nil {
@@ -190,14 +209,20 @@ func rpcError(err error) error {
 }
 
 func sessionProto(info Info) *piv1.Session {
+	updatedAt := int64(0)
+	if !info.UpdatedAt.IsZero() {
+		updatedAt = info.UpdatedAt.Unix()
+	}
 	return &piv1.Session{
-		Id:           info.ID,
-		Name:         info.Name,
-		SessionFile:  info.File,
-		Model:        info.Model,
-		Streaming:    info.Streaming,
-		MessageCount: info.MessageCount,
-		Cwd:          info.Cwd,
+		Id:            info.ID,
+		Name:          info.Name,
+		SessionFile:   info.File,
+		Model:         info.Model,
+		Streaming:     info.Streaming,
+		MessageCount:  info.MessageCount,
+		Cwd:           info.Cwd,
+		Active:        info.Active,
+		UpdatedAtUnix: updatedAt,
 	}
 }
 

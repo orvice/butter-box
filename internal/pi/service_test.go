@@ -20,7 +20,7 @@ import (
 // fake pi: create, get, unary send, streaming send, delete.
 func TestServiceEndToEnd(t *testing.T) {
 	t.Setenv("FAKE_PI", "1")
-	manager := NewManager(testLogger(t), Config{Bin: os.Args[0], MaxSessions: 4})
+	manager := NewManager(testLogger(t), Config{Bin: os.Args[0], MaxSessions: 4, SessionDir: t.TempDir()})
 	t.Cleanup(manager.Stop)
 
 	path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
@@ -48,6 +48,9 @@ func TestServiceEndToEnd(t *testing.T) {
 	if got.Msg.GetStats().GetInputTokens() != 100 {
 		t.Fatalf("stats = %+v", got.Msg.GetStats())
 	}
+	if !got.Msg.GetSession().GetActive() {
+		t.Fatalf("session = %+v, want active", got.Msg.GetSession())
+	}
 
 	models, err := client.GetAvailableModels(ctx, connect.NewRequest(&piv1.GetAvailableModelsRequest{SessionId: id}))
 	if err != nil {
@@ -73,6 +76,34 @@ func TestServiceEndToEnd(t *testing.T) {
 	}
 	if sent.Msg.GetStopReason() != "stop" {
 		t.Fatalf("stop reason = %q", sent.Msg.GetStopReason())
+	}
+
+	// The transcript so far: user and assistant message entries.
+	entries, err := client.ListEntries(ctx, connect.NewRequest(&piv1.ListEntriesRequest{SessionId: id}))
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	all := entries.Msg.GetEntries()
+	if len(all) != 2 || all[0].GetType() != "message" {
+		t.Fatalf("entries = %+v, want 2 message entries", all)
+	}
+	if !strings.Contains(all[1].GetPayloadJson(), "echo: hello over connect") {
+		t.Fatalf("assistant entry = %q", all[1].GetPayloadJson())
+	}
+	if entries.Msg.GetLeafId() != all[1].GetId() || entries.Msg.GetRunning() {
+		t.Fatalf("entries listing = %+v, want leaf on last entry and not running", entries.Msg)
+	}
+
+	// Incremental poll from a cursor returns just the newer entries.
+	tail, err := client.ListEntries(ctx, connect.NewRequest(&piv1.ListEntriesRequest{
+		SessionId:   id,
+		AfterCursor: all[0].GetId(),
+	}))
+	if err != nil {
+		t.Fatalf("ListEntries after cursor: %v", err)
+	}
+	if len(tail.Msg.GetEntries()) != 1 || tail.Msg.GetEntries()[0].GetId() != entries.Msg.GetLeafId() {
+		t.Fatalf("tail = %+v, want just the leaf entry", tail.Msg.GetEntries())
 	}
 
 	stream, err := client.StreamMessage(ctx, connect.NewRequest(&piv1.StreamMessageRequest{

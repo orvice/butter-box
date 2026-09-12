@@ -14,9 +14,17 @@ service PiService {
   // CreateSession spawns a new pi session process.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
 
-  // ListSessions reports sessions currently held by this server (active
-  // processes only; historical sessions live in pi's session directory).
+  // ListSessions reports every session on this box, newest first: sessions
+  // with an active process plus inactive ones found in pi's session
+  // directory.
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
+  // ListEntries reports the session's entries — the transcript a chat client
+  // renders — re-attaching the session if it is not currently active. With
+  // after_cursor set only entries past that entry are returned, so a client
+  // refresh loop polls incrementally using the last entry id it has seen.
+  // During an in-flight run the listing grows as the run progresses.
+  rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
 
   // GetSession reports state and usage statistics for one session,
   // re-attaching it if it is not currently active.
@@ -164,6 +172,32 @@ message TurnResult {
   SessionStats stats = 3;
 }
 
+message ListEntriesRequest {
+  string session_id = 1;
+  // Entry id to list from, exclusive: a turn_cursor from SubmitMessage or
+  // the id of the last entry already seen. Empty lists the full transcript.
+  string after_cursor = 2;
+}
+
+message ListEntriesResponse {
+  // Entries past after_cursor, oldest first.
+  repeated Entry entries = 1;
+  // The session's current leaf entry id ("" for a session with no entries).
+  // Pass it as after_cursor to poll for what comes next.
+  string leaf_id = 2;
+  // True while a run is in flight; more entries will appear.
+  bool running = 3;
+}
+
+message Entry {
+  // pi's entry id, usable as an after_cursor.
+  string id = 1;
+  // pi entry type (message, model_change, thinking_level_change, ...).
+  string type = 2;
+  // Full pi entry as JSON, passed through verbatim.
+  string payload_json = 3;
+}
+
 message GetAvailableModelsRequest {
   // Optional session whose pi process answers — its scoped model config may
   // differ. Empty answers from the box: a short-lived pi process reads the
@@ -255,9 +289,16 @@ message Session {
   string model = 4;
   // True while a run is in flight.
   bool streaming = 5;
+  // Number of messages in the session (0 for inactive sessions, which are
+  // reported from disk without being attached).
   int32 message_count = 6;
   // Effective working directory of the session process ("" when unknown).
   string cwd = 7;
+  // True when a pi process currently hosts this session on the box. Inactive
+  // sessions re-attach transparently on first use.
+  bool active = 8;
+  // Unix seconds of the session file's last modification (0 when unknown).
+  int64 updated_at_unix = 9;
 }
 
 message SessionStats {

@@ -2,6 +2,7 @@ package pi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,7 +28,7 @@ func (w testWriter) Write(p []byte) (int, error) {
 
 func testCtx(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -178,7 +179,7 @@ func TestAttachUnknownSession(t *testing.T) {
 }
 
 func TestReattachKnownSession(t *testing.T) {
-	m := newFakeManager(t)
+	m := newFakeManagerCfg(t, Config{MaxSessions: 1})
 	ctx := testCtx(t)
 
 	info, _, err := m.Get(ctx, "known-abc123")
@@ -262,6 +263,286 @@ func TestSubmitAndGetTurn(t *testing.T) {
 	}
 	if status.Running || status.Result == nil || status.Result.Text != "echo: quick two" {
 		t.Fatalf("second turn status = %+v", status)
+	}
+}
+
+func TestEntries(t *testing.T) {
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// A fresh session has no entries.
+	res, err := m.Entries(ctx, info.ID, "")
+	if err != nil {
+		t.Fatalf("Entries empty: %v", err)
+	}
+	if len(res.Entries) != 0 || res.LeafID != "" || res.Running {
+		t.Fatalf("empty session entries = %+v", res)
+	}
+
+	if _, err := m.Send(ctx, info.ID, "one", nil, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	// Full transcript: the user and assistant message entries, oldest first.
+	res, err = m.Entries(ctx, info.ID, "")
+	if err != nil {
+		t.Fatalf("Entries full: %v", err)
+	}
+	if len(res.Entries) != 2 {
+		t.Fatalf("entries = %+v, want 2", res.Entries)
+	}
+	for _, e := range res.Entries {
+		if e.Type != "message" || e.ID == "" || !json.Valid(e.Raw) {
+			t.Fatalf("entry = %+v, want valid message entry", e)
+		}
+	}
+	if !strings.Contains(string(res.Entries[1].Raw), "echo: one") {
+		t.Fatalf("assistant entry = %s, want echoed text", res.Entries[1].Raw)
+	}
+	if res.LeafID != res.Entries[1].ID {
+		t.Fatalf("leaf = %q, want %q", res.LeafID, res.Entries[1].ID)
+	}
+	if res.Running {
+		t.Fatalf("running after settle, want false")
+	}
+
+	// Incremental poll: only entries past the cursor.
+	tail, err := m.Entries(ctx, info.ID, res.Entries[0].ID)
+	if err != nil {
+		t.Fatalf("Entries after cursor: %v", err)
+	}
+	if len(tail.Entries) != 1 || tail.Entries[0].ID != res.LeafID {
+		t.Fatalf("tail entries = %+v, want just the leaf", tail.Entries)
+	}
+
+	if _, err := m.Entries(ctx, info.ID, "no-such-entry"); !errors.Is(err, ErrBadCursor) {
+		t.Fatalf("Entries bad cursor = %v, want ErrBadCursor", err)
+	}
+
+	// Mid-run a listing reports running so a refresh loop keeps polling.
+	cursor, err := m.Submit(ctx, info.ID, "slow two", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	mid, err := m.Entries(ctx, info.ID, cursor)
+	if err != nil {
+		t.Fatalf("Entries mid-run: %v", err)
+	}
+	if !mid.Running {
+		t.Fatalf("mid-run entries = %+v, want running", mid)
+	}
+	if _, err := m.Turn(ctx, info.ID, cursor, 10*time.Second); err != nil {
+		t.Fatalf("Turn settle: %v", err)
+	}
+	done, err := m.Entries(ctx, info.ID, cursor)
+	if err != nil {
+		t.Fatalf("Entries after settle: %v", err)
+	}
+	if len(done.Entries) != 2 || done.Running {
+		t.Fatalf("settled entries = %+v, want 2 new entries and not running", done)
+	}
+}
+
+func TestEntriesPollingAcrossSettlement(t *testing.T) {
+	for _, mode := range []string{"submit", "send", "concurrent_send"} {
+		t.Run(mode, func(t *testing.T) {
+			signal, wait := fakeGateSetup(t, "FAKE_PI_ENTRIES_GATE")
+			m := newFakeManager(t)
+			ctx := testCtx(t)
+			info, err := m.Create(ctx, CreateOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var cursor string
+			var sent chan error
+			start := func() {
+				t.Helper()
+				if mode == "submit" {
+					cursor, err = m.Submit(ctx, info.ID, "gated run", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				sent = make(chan error, 1)
+				started := make(chan struct{})
+				go func() {
+					_, err := m.Send(ctx, info.ID, "gated run", nil, func(eventType string, _ []byte) error {
+						if eventType == "agent_start" {
+							close(started)
+						}
+						return nil
+					})
+					sent <- err
+				}()
+				select {
+				case <-started:
+				case err := <-sent:
+					t.Fatalf("Send ended before starting: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			if mode != "concurrent_send" {
+				start()
+			}
+
+			// Hold the snapshot's response until the run has settled. The
+			// concurrent case also starts the run after the snapshot was taken.
+			signal("armed")
+			type pollResult struct {
+				EntriesResult
+				err error
+			}
+			polled := make(chan pollResult, 1)
+			go func() {
+				res, err := m.Entries(ctx, info.ID, cursor)
+				polled <- pollResult{res, err}
+			}()
+			wait("captured")
+			if mode == "concurrent_send" {
+				start()
+			}
+			signal("finish")
+			if mode == "submit" {
+				settled, err := m.Turn(ctx, info.ID, cursor, 10*time.Second)
+				if err != nil || settled.Running || settled.Result == nil {
+					t.Fatalf("settle turn = %+v, %v", settled, err)
+				}
+			} else if err := <-sent; err != nil {
+				t.Fatal(err)
+			}
+			signal("release")
+
+			first := <-polled
+			if first.err != nil {
+				t.Fatal(first.err)
+			}
+			res := first.EntriesResult
+			var transcript []EntryRecord
+			for {
+				transcript = append(transcript, res.Entries...)
+				if !res.Running {
+					break
+				}
+				res, err = m.Entries(ctx, info.ID, res.LeafID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(transcript) != 2 || !strings.Contains(string(transcript[1].Raw), "echo: gated run") {
+				t.Fatalf("polling stopped before the final reply: got %d entries", len(transcript))
+			}
+		})
+	}
+}
+
+func TestListIncludesDiskSessions(t *testing.T) {
+	sessionDir := t.TempDir()
+	sub := filepath.Join(sessionDir, "--proj--")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSession := func(path, id, cwd string, age time.Duration) {
+		t.Helper()
+		header := fmt.Sprintf(`{"type":"session","version":3,"id":%q,"timestamp":"2026-01-01T00:00:00.000Z","cwd":%q}`, id, cwd)
+		if err := os.WriteFile(path, []byte(header+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mtime := time.Now().Add(-age)
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSession(filepath.Join(sessionDir, "a_disk-old.jsonl"), "disk-old", "/old/dir", 2*time.Hour)
+	newFile := filepath.Join(sub, "b_disk-new.jsonl")
+	writeSession(newFile, "disk-new", "/new/dir", time.Hour)
+	// A stale duplicate of disk-new: the newest file must win.
+	writeSession(filepath.Join(sessionDir, "c_disk-new.jsonl"), "disk-new", "/stale/dir", 3*time.Hour)
+	// A disk file for the active session must not produce a duplicate row.
+	writeSession(filepath.Join(sessionDir, "d_active.jsonl"), fakeSessionID, "/active/dir", time.Minute)
+	// Non-session files are ignored.
+	if err := os.WriteFile(filepath.Join(sessionDir, "junk.jsonl"), []byte(`{"type":"other"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newFakeManagerCfg(t, Config{MaxSessions: 4, SessionDir: sessionDir})
+	ctx := testCtx(t)
+
+	if _, err := m.Create(ctx, CreateOpts{}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	infos, err := m.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var ids []string
+	for _, info := range infos {
+		ids = append(ids, info.ID)
+	}
+	// Newest first; the active session's reported file does not exist on
+	// disk, so its mtime is unknown and it sorts last.
+	want := []string{"disk-new", "disk-old", fakeSessionID}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+
+	byID := map[string]Info{}
+	for _, info := range infos {
+		byID[info.ID] = info
+	}
+	if !byID[fakeSessionID].Active {
+		t.Fatalf("active session = %+v, want Active", byID[fakeSessionID])
+	}
+	diskNew := byID["disk-new"]
+	if diskNew.Active || diskNew.Cwd != "/new/dir" || diskNew.File != newFile || diskNew.UpdatedAt.IsZero() {
+		t.Fatalf("disk-new = %+v", diskNew)
+	}
+	if byID["disk-old"].Cwd != "/old/dir" {
+		t.Fatalf("disk-old = %+v", byID["disk-old"])
+	}
+}
+
+func TestListAfterProcessExit(t *testing.T) {
+	dir := t.TempDir()
+	cwd := t.TempDir()
+	const id = "known-crashed-session"
+	file := filepath.Join(dir, "2026-01-01T00-00-00-000Z_"+id+".jsonl")
+	header := fmt.Sprintf("{\"type\":\"session\",\"version\":3,\"id\":%q,\"cwd\":%q}\n", id, cwd)
+	if err := os.WriteFile(file, []byte(header), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := newFakeManagerCfg(t, Config{SessionDir: dir})
+	ctx := testCtx(t)
+	if _, _, err := m.Get(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Send(ctx, id, "crash", nil, nil); !errors.Is(err, errProcessExited) {
+		t.Fatalf("Send to crashing process = %v, want process exit", err)
+	}
+
+	infos, err := m.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Active {
+		t.Fatalf("List after process exit = %+v, want one inactive session", infos)
+	}
+	if infos[0].File != file || infos[0].Cwd != cwd || infos[0].UpdatedAt.IsZero() {
+		t.Fatalf("inactive session = %+v, want metadata from disk", infos[0])
+	}
+
+	// Listing must not leave the dead process in the attach cache.
+	info, _, err := m.Get(ctx, id)
+	if err != nil || !info.Active {
+		t.Fatalf("Get after process exit = %+v, %v, want re-attached session", info, err)
 	}
 }
 
@@ -591,6 +872,62 @@ func TestFindSessionCwd(t *testing.T) {
 	}
 	if got := findSessionCwd(root, "missing"); got != "" {
 		t.Fatalf("findSessionCwd missing = %q, want empty", got)
+	}
+}
+
+func TestCapacityRecoversAfterProcessExit(t *testing.T) {
+	for _, operation := range []string{"create", "attach"} {
+		t.Run(operation, func(t *testing.T) {
+			m := newFakeManagerCfg(t, Config{MaxSessions: 1})
+			ctx := testCtx(t)
+			info, err := m.Create(ctx, CreateOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Send(ctx, info.ID, "crash", nil, nil); !errors.Is(err, errProcessExited) {
+				t.Fatalf("Send to crashing process = %v, want process exit", err)
+			}
+
+			switch operation {
+			case "create":
+				if _, err := m.Create(ctx, CreateOpts{}); err != nil {
+					t.Fatalf("Create after process exit: %v", err)
+				}
+			case "attach":
+				if _, _, err := m.Get(ctx, "known-after-crash"); err != nil {
+					t.Fatalf("Get after process exit: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestConcurrentCreateSessionLimit(t *testing.T) {
+	signal, wait := fakeGateSetup(t, "FAKE_PI_START_GATE")
+	m := newFakeManagerCfg(t, Config{MaxSessions: 1})
+
+	type createResult struct {
+		info Info
+		err  error
+	}
+	first := make(chan createResult, 1)
+	ctx := testCtx(t)
+	go func() {
+		info, err := m.Create(ctx, CreateOpts{})
+		first <- createResult{info, err}
+	}()
+	wait("captured")
+
+	secondCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	_, secondErr := m.Create(secondCtx, CreateOpts{})
+	cancel()
+	signal("release")
+	created := <-first
+	if created.err != nil || created.info.ID == "" {
+		t.Fatalf("first Create = %+v", created)
+	}
+	if !errors.Is(secondErr, ErrTooManySessions) {
+		t.Fatalf("concurrent Create = %v, want ErrTooManySessions", secondErr)
 	}
 }
 

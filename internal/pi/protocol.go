@@ -92,10 +92,17 @@ type entryData struct {
 	} `json:"message"`
 }
 
-// entriesData mirrors get_entries' response data.
+// entriesData mirrors get_entries' response data while keeping each entry
+// verbatim for callers that pass it through.
 type entriesData struct {
-	Entries []entryData `json:"entries"`
-	LeafID  *string     `json:"leafId"`
+	Entries []json.RawMessage `json:"entries"`
+	LeafID  *string           `json:"leafId"`
+}
+
+// entryHead is the envelope every session entry carries.
+type entryHead struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
 }
 
 // assistantEnd extracts the stop reason from a message_end event when the
