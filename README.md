@@ -26,6 +26,7 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), `gog`, `td` (Todoist)
 - Coding agent CLIs: `codex`, `opencode` (`/usr/bin/opencode`), `pi`, `pi-web` ([@agegr/pi-web](https://github.com/agegr/pi-web), browser UI for `pi`)
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
+- Plain-text accounting: [`beancount`](https://github.com/beancount/beancount) (`bean-check`, `bean-format`, …) and [`fava`](https://github.com/beancount/fava) web UI with the [`fava-dashboards`](https://github.com/andreasgerstmayr/fava-dashboards) extension, installed in the `/opt/beancount` venv (add more extensions with `/opt/beancount/bin/pip install ...`). Run `fava --host 0.0.0.0 -p 5000 main.bean` and publish port `5000` to reach it from outside the container
 
 ## Local Run
 

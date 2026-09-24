@@ -71,6 +71,21 @@ RUN apt-get update \
 # toot (Mastodon CLI, https://toot.bezdomni.net)
 RUN pip3 install --no-cache-dir --break-system-packages "toot[images]"
 
+# Beancount + Fava (https://beancount.github.io/fava/) with the
+# fava-dashboards extension, isolated in a venv so their pinned deps don't
+# clash with apt-managed Python packages. CLIs are symlinked onto PATH.
+RUN python3 -m venv /opt/beancount \
+	&& /opt/beancount/bin/pip install --no-cache-dir \
+		beancount \
+		fava \
+		fava-dashboards \
+	&& for bin in /opt/beancount/bin/bean-* /opt/beancount/bin/fava; do \
+		ln -sf "$bin" /usr/local/bin/; \
+	done \
+	&& fava --version \
+	&& bean-check --help >/dev/null \
+	&& /opt/beancount/bin/python -c "import fava_dashboards"
+
 # Node.js (NodeSource)
 RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
 	&& apt-get install -y --no-install-recommends nodejs \
@@ -160,7 +175,7 @@ ENV NPM_CONFIG_PREFIX=/home/butterbox/.npm-global
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV PATH=/usr/local/go/bin:/home/butterbox/go/bin:/home/butterbox/.npm-global/bin:/home/butterbox/.local/bin:$PATH
 
-EXPOSE 8080
+EXPOSE 8080 5000
 
 USER butterbox
 
