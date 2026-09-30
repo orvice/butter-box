@@ -3,11 +3,14 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orvice/butter-box/internal/sandbox"
 )
 
 const (
@@ -26,6 +29,7 @@ type Config struct {
 	PiWeb        PiWebConfig
 	PiAPI        PiAPIConfig
 	Cursor       CursorAPIConfig
+	Linear       LinearConfig
 }
 
 type PiWebConfig struct {
@@ -42,6 +46,24 @@ type PiAPIConfig struct {
 	MaxSessions int
 	IdleTimeout time.Duration
 	SessionDir  string
+}
+
+// LinearConfig configures the Linear agent integration, which runs pi
+// sessions for Linear Agent Sessions on the same session manager as the Pi
+// API.
+type LinearConfig struct {
+	Enabled       bool
+	ClientID      string
+	ClientSecret  string
+	WebhookSecret string
+	InstallSecret string
+	BaseURL       string
+	StateDir      string
+	Cwd           string
+	Provider      string
+	Model         string
+	ThinkingLevel string
+	RunTimeout    time.Duration
 }
 
 // CursorAPIConfig configures the Cursor SDK Bridge session API. The Cursor
@@ -72,7 +94,14 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	piAPI, err := loadPiAPIConfig()
+	linear, err := loadLinearConfig(filepath.Clean(absRoot))
+	if err != nil {
+		return nil, err
+	}
+
+	// The Linear integration drives pi through the same session manager,
+	// so it needs the manager settings even when the Pi API is off.
+	piAPI, err := loadPiAPIConfig(linear.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -98,16 +127,19 @@ func LoadConfig() (*Config, error) {
 		PiWeb:        piWeb,
 		PiAPI:        piAPI,
 		Cursor:       cursorAPI,
+		Linear:       linear,
 	}, nil
 }
 
-func loadPiAPIConfig() (PiAPIConfig, error) {
+// loadPiAPIConfig reads the pi session manager settings; managerNeeded
+// requests them for another user of the manager when the Pi API is off.
+func loadPiAPIConfig(managerNeeded bool) (PiAPIConfig, error) {
 	cfg := PiAPIConfig{
 		Enabled:    envBool("PI_API_ENABLED", false),
 		Bin:        getenvDefault("PI_BIN", "pi"),
 		SessionDir: strings.TrimSpace(os.Getenv("PI_SESSION_DIR")),
 	}
-	if !cfg.Enabled {
+	if !cfg.Enabled && !managerNeeded {
 		return cfg, nil
 	}
 
@@ -164,6 +196,71 @@ func loadCursorAPIConfig(piCfg PiAPIConfig) (CursorAPIConfig, error) {
 		return cfg, fmt.Errorf("CURSOR_API_IDLE_TIMEOUT must be a positive duration, got %q", idleText)
 	}
 	cfg.IdleTimeout = timeout
+	return cfg, nil
+}
+
+func loadLinearConfig(root string) (LinearConfig, error) {
+	cfg := LinearConfig{
+		Enabled:       envBool("LINEAR_ENABLED", false),
+		ClientID:      strings.TrimSpace(os.Getenv("LINEAR_CLIENT_ID")),
+		ClientSecret:  strings.TrimSpace(os.Getenv("LINEAR_CLIENT_SECRET")),
+		WebhookSecret: strings.TrimSpace(os.Getenv("LINEAR_WEBHOOK_SECRET")),
+		InstallSecret: strings.TrimSpace(os.Getenv("LINEAR_INSTALL_SECRET")),
+		BaseURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("LINEAR_BASE_URL")), "/"),
+		StateDir:      strings.TrimSpace(os.Getenv("LINEAR_STATE_DIR")),
+		Cwd:           getenvDefault("LINEAR_PI_CWD", "."),
+		Provider:      strings.TrimSpace(os.Getenv("LINEAR_PI_PROVIDER")),
+		Model:         strings.TrimSpace(os.Getenv("LINEAR_PI_MODEL")),
+		ThinkingLevel: strings.TrimSpace(os.Getenv("LINEAR_PI_THINKING_LEVEL")),
+	}
+	if !cfg.Enabled {
+		return cfg, nil
+	}
+
+	var missing []string
+	for _, req := range []struct{ name, value string }{
+		{"LINEAR_CLIENT_ID", cfg.ClientID},
+		{"LINEAR_CLIENT_SECRET", cfg.ClientSecret},
+		{"LINEAR_WEBHOOK_SECRET", cfg.WebhookSecret},
+		{"LINEAR_INSTALL_SECRET", cfg.InstallSecret},
+		{"LINEAR_BASE_URL", cfg.BaseURL},
+	} {
+		if req.value == "" {
+			missing = append(missing, req.name)
+		}
+	}
+	if len(missing) > 0 {
+		return cfg, fmt.Errorf("LINEAR_ENABLED requires %s", strings.Join(missing, ", "))
+	}
+	// The install secret is the only thing standing between a stranger and
+	// installing their Linear workspace into this box.
+	if len(cfg.InstallSecret) < 16 {
+		return cfg, errors.New("LINEAR_INSTALL_SECRET must be at least 16 characters")
+	}
+	base, err := url.Parse(cfg.BaseURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+		return cfg, fmt.Errorf("LINEAR_BASE_URL must be an absolute http(s) URL, got %q", cfg.BaseURL)
+	}
+	// Fail at startup on a working directory outside the sandbox; whether
+	// it exists is checked per session, so a repo may be cloned later.
+	if _, err := sandbox.Resolve(root, cfg.Cwd); err != nil {
+		return cfg, fmt.Errorf("LINEAR_PI_CWD: %w", err)
+	}
+
+	if cfg.StateDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return cfg, fmt.Errorf("LINEAR_STATE_DIR is unset and the home directory is unknown: %w", err)
+		}
+		cfg.StateDir = filepath.Join(home, ".butterbox", "linear")
+	}
+
+	timeoutText := getenvDefault("LINEAR_RUN_TIMEOUT", "30m")
+	timeout, err := time.ParseDuration(timeoutText)
+	if err != nil || timeout <= 0 {
+		return cfg, fmt.Errorf("LINEAR_RUN_TIMEOUT must be a positive duration, got %q", timeoutText)
+	}
+	cfg.RunTimeout = timeout
 	return cfg, nil
 }
 
