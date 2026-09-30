@@ -112,6 +112,15 @@ docker compose up -d
 - `CURSOR_MAX_SESSIONS`: cap on active Cursor bridge processes, default `PI_API_MAX_SESSIONS` or `8`
 - `CURSOR_API_IDLE_TIMEOUT`: stop an idle Cursor bridge while retaining agent state, default `30m`
 - `CURSOR_SDK_BRIDGE_BIN`: bridge executable, default `cursor-sdk-bridge`
+- `LINEAR_ENABLED`: run pi as a [Linear agent](#linear-agent), default `false`
+- `LINEAR_CLIENT_ID` / `LINEAR_CLIENT_SECRET`: the Linear OAuth app's credentials; required when `LINEAR_ENABLED` is set
+- `LINEAR_WEBHOOK_SECRET`: the Linear app's webhook signing secret; required when `LINEAR_ENABLED` is set
+- `LINEAR_INSTALL_SECRET`: gates `/linear/install`, at least 16 characters; required when `LINEAR_ENABLED` is set
+- `LINEAR_BASE_URL`: the box's public HTTPS URL, e.g. `https://box.example.com`; the OAuth callback is `<LINEAR_BASE_URL>/linear/oauth/callback`. Required when `LINEAR_ENABLED` is set
+- `LINEAR_STATE_DIR`: where the Linear OAuth installations and session map are kept, default `~/.butterbox/linear`
+- `LINEAR_PI_CWD`: working directory of the pi sessions Linear starts, absolute or relative to `SANDBOX_ROOT` (same rules as `CreateSession.cwd`), default `SANDBOX_ROOT`
+- `LINEAR_PI_PROVIDER` / `LINEAR_PI_MODEL` / `LINEAR_PI_THINKING_LEVEL`: optional pi model settings for those sessions
+- `LINEAR_RUN_TIMEOUT`: abort a Linear-triggered pi run after this long (Go duration), default `30m`
 
 ## Pi Web
 
@@ -201,6 +210,28 @@ curl -X POST http://127.0.0.1:8080/butterbox.cursor.v1.CursorService/ListModels 
 ```
 
 Regenerate the ConnectRPC code after editing a proto with `buf generate` (config in `buf.gen.yaml`, lint with `buf lint`).
+
+## Linear Agent
+
+When `LINEAR_ENABLED=true`, ButterBox runs pi as a [Linear agent](https://linear.app/developers/agents): people delegate an issue to the app or mention it, Linear sends an Agent Session webhook, and pi works on it in `LINEAR_PI_CWD` and replies in the Linear session. Each Linear agent session is backed by one pi session on the shared session manager, so it counts toward `PI_API_MAX_SESSIONS`, is stopped when idle and re-attached on the next message, and shows up in `ListSessions` and pi-web like any other session.
+
+Setup:
+
+1. In Linear, go to Settings → API → New OAuth app. Set the callback URL to `https://<your-box>/linear/oauth/callback` and the webhook URL to `https://<your-box>/linear/webhook`. Enable Agent Session events. Copy the client ID, client secret and webhook signing secret into the `LINEAR_*` variables.
+2. Start the box, then open `https://<your-box>/linear/install?install_secret=<LINEAR_INSTALL_SECRET>` and approve the install. The app is installed with the `read,write,app:assignable,app:mentionable` scopes as an app actor. Its token is kept in `LINEAR_STATE_DIR` and refreshed before it expires. You can install into several workspaces: each webhook is answered with the token of the workspace it came from.
+3. Assign an issue to the app or mention it in a comment.
+
+How a session runs:
+
+- **New session.** When a session is created, the box acknowledges it at once, since Linear marks a session unresponsive otherwise. It then starts a pi session with Linear's prompt context and posts pi's final message as the reply.
+- **Progress.** Tool calls appear as progress actions, at most one every few seconds. Obvious credentials are redacted from everything posted, but that redaction is best effort.
+- **Messages mid-run.** A message sent during a run is queued and delivered to the same pi session when the run settles.
+- **Stop.** Linear's stop button aborts the run and drops the queue.
+- **Restart.** If the box restarts mid-run, the next start tells the session the run was cut short. The pi session and its history are kept.
+
+The three `/linear/*` routes are public: Linear and your browser have to reach them without the box bearer token. The webhook is authenticated by Linear's HMAC signature, and deliveries more than a minute old are rejected. The install route is gated by `LINEAR_INSTALL_SECRET`, and the OAuth callback by a single-use state. Expose only these routes publicly, not `/mcp` or the Pi API, and put TLS in front.
+
+**Security.** Anyone who can mention the app in your Linear workspace can make pi run commands on the box. That means the `butterbox` user's passwordless `sudo` and every CLI credential in its home directory. Treat Linear access to the app as shell access to the box.
 
 ## MCP Server JSON Example
 
