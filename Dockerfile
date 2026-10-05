@@ -96,6 +96,18 @@ RUN wget -nv -O /tmp/githubcli-keyring.gpg https://cli.github.com/packages/githu
 	&& apt-get install -y --no-install-recommends gh \
 	&& rm -rf /var/lib/apt/lists/* /tmp/githubcli-keyring.gpg
 
+# 1Password CLI (op)
+RUN curl -fsSL https://downloads.1password.com/linux/keys/1password.asc -o /tmp/1password.asc \
+	&& test "$(gpg --show-keys --with-colons /tmp/1password.asc | awk -F: '$1 == "fpr" { print $10; exit }')" = "3FEF9748469ADBE15DA7CA80AC2D62742012EA22" \
+	&& gpg --batch --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg /tmp/1password.asc \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" > /etc/apt/sources.list.d/1password.list \
+	&& mkdir -p /etc/debsig/policies/AC2D62742012EA22 /usr/share/debsig/keyrings/AC2D62742012EA22 \
+	&& curl -fsSL https://downloads.1password.com/linux/debian/debsig/1password.pol -o /etc/debsig/policies/AC2D62742012EA22/1password.pol \
+	&& gpg --batch --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg /tmp/1password.asc \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends 1password-cli \
+	&& rm -rf /var/lib/apt/lists/* /tmp/1password.asc
+
 # Go toolchain
 RUN ARCH="$(dpkg --print-architecture)" \
 	&& curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tgz \

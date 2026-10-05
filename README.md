@@ -23,7 +23,7 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - **Go** 1.27.1 toolchain (`GOPATH=~/go`, `~/go/bin` on `PATH`)
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`, `kubectl`
 - Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`, `logcli` (Grafana Loki)
-- Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), `gog`, `td` (Todoist)
+- Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), [`op`](https://developer.1password.com/docs/cli/) (1Password), `gog`, `td` (Todoist)
 - Coding agent CLIs: `codex`, `opencode` (`/usr/bin/opencode`), `pi`, `pi-web` ([@agegr/pi-web](https://github.com/agegr/pi-web), browser UI for `pi`)
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
 
