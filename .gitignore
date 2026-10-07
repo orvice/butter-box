@@ -1,4 +1,5 @@
 butter-box
+.env
 dist/
 build/
 tmp/

@@ -89,6 +89,20 @@ Start it with:
 docker compose up -d
 ```
 
+## Workspace Environment File
+
+On startup, ButterBox loads `/workspace/.env` when the file exists. It uses standard dotenv syntax, for example:
+
+```dotenv
+MCP_AUTH_TOKEN=secret-token
+PI_WEB_ENABLED=true
+PI_WEB_PASSWORD=long-random-password
+```
+
+Variables already present in the container environment take precedence, so Docker or Compose can still override values from the file. A missing file is ignored; an unreadable or malformed file stops startup with an error. Loaded variables configure ButterBox and are inherited by child processes such as `pi`, `pi-web`, and `cursor-sdk-bridge`. The file is read once per ButterBox start, so restart the container after changing it.
+
+For the Compose example above, the host-side file is `/tmp/sandbox-workspace/.env`; entries supplied there can be removed from the Compose `environment` block. The workspace is accessible to ButterBox tools and agents, so treat `.env` as readable by them, keep it out of version control, and use restrictive file permissions when it contains secrets.
+
 ## Environment Variables
 
 - `MCP_ADDR`: HTTP listen address, default `:8080`

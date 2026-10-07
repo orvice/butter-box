@@ -17,6 +17,14 @@ import (
 )
 
 func Run(ctx context.Context, logger *slog.Logger) error {
+	envLoaded, err := loadEnvironmentFile(defaultEnvFile)
+	if err != nil {
+		return err
+	}
+	if envLoaded {
+		logger.Info("loaded environment file", slog.String("path", defaultEnvFile))
+	}
+
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
