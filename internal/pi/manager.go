@@ -587,33 +587,68 @@ func (m *Manager) turnResult(ctx context.Context, proc *process, cursor string) 
 		return nil, err
 	}
 
-	var last entryData
-	found := false
+	var last *SendResult
 	for _, raw := range payload.Entries {
 		var entry entryData
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return nil, fmt.Errorf("decode session entry: %w", err)
 		}
-		if entry.Type == "message" && entry.Message.Role == "assistant" {
-			last = entry
-			found = true
+		if entry.Type != "message" {
+			continue
 		}
+		var head struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(entry.Message, &head); err != nil {
+			return nil, fmt.Errorf("decode session message: %w", err)
+		}
+		if head.Role != "assistant" {
+			continue
+		}
+		result, err := decodeAssistantResult(entry.Message)
+		if err != nil {
+			return nil, err
+		}
+		last = result
 	}
-	if !found {
+	if last == nil {
 		return nil, nil
 	}
 
-	text := ""
-	for _, block := range last.Message.Content {
-		if block.Type == "text" {
-			text += block.Text
-		}
-	}
 	stats, err := getStats(ctx, proc)
 	if err != nil {
 		return nil, err
 	}
-	return &SendResult{Text: text, StopReason: last.Message.StopReason, Stats: stats}, nil
+	last.Stats = stats
+	return last, nil
+}
+
+// decodeAssistantResult consumes only assistant fields used in a turn result.
+// Unknown and non-text blocks stay opaque; only text blocks require text strings.
+// Missing/null content retains the existing empty-result behavior.
+func decodeAssistantResult(raw json.RawMessage) (*SendResult, error) {
+	var message struct {
+		StopReason string `json:"stopReason"`
+		Content    []struct {
+			Type string          `json:"type"`
+			Text json.RawMessage `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &message); err != nil {
+		return nil, fmt.Errorf("decode assistant content: %w", err)
+	}
+	var text strings.Builder
+	for _, block := range message.Content {
+		if block.Type != "text" || len(block.Text) == 0 {
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(block.Text, &value); err != nil {
+			return nil, fmt.Errorf("decode assistant content text: %w", err)
+		}
+		text.WriteString(value)
+	}
+	return &SendResult{Text: text.String(), StopReason: message.StopReason}, nil
 }
 
 // EntryRecord is one session entry, passed through verbatim.
@@ -714,10 +749,10 @@ func getLeafCursor(ctx context.Context, proc *process) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Preserve Submit's validation of the complete response even though it
-	// only consumes leafId; other callers intentionally pass entries through.
+	// Validate entry envelopes, not role-dependent message bodies. JSON
+	// syntax has already been validated by getEntries.
 	for _, raw := range payload.Entries {
-		var entry entryData
+		var entry entryHead
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return "", fmt.Errorf("decode session entry: %w", err)
 		}

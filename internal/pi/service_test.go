@@ -230,6 +230,50 @@ func TestServiceBoxCatalogAndDirectories(t *testing.T) {
 	}
 }
 
+func TestServiceStringUserContent(t *testing.T) {
+	t.Setenv("FAKE_PI_USER_CONTENT", "string")
+	client, ctx := newTestClient(t, Config{MaxSessions: 4})
+	created, err := client.CreateSession(ctx, connect.NewRequest(&piv1.CreateSessionRequest{}))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	id := created.Msg.GetSession().GetId()
+	sent, err := client.SendMessage(ctx, connect.NewRequest(&piv1.SendMessageRequest{SessionId: id, Message: "first"}))
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if sent.Msg.GetText() != "echo: first" || sent.Msg.GetStopReason() != "stop" {
+		t.Fatalf("SendMessage result = %+v", sent.Msg)
+	}
+
+	// Submit reads a cursor from a transcript already containing string content.
+	submitted, err := client.SubmitMessage(ctx, connect.NewRequest(&piv1.SubmitMessageRequest{SessionId: id, Message: "second"}))
+	if err != nil {
+		t.Fatalf("SubmitMessage: %v", err)
+	}
+	if submitted.Msg.GetTurnCursor() == "" {
+		t.Fatal("SubmitMessage cursor is empty for an existing transcript")
+	}
+	turn, err := client.GetTurn(ctx, connect.NewRequest(&piv1.GetTurnRequest{
+		SessionId: id, TurnCursor: submitted.Msg.GetTurnCursor(), WaitSeconds: 10,
+	}))
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	result := turn.Msg.GetResult()
+	if turn.Msg.GetRunning() || result == nil || result.GetText() != "echo: second" || result.GetStopReason() != "stop" {
+		t.Fatalf("GetTurn result = %+v", turn.Msg)
+	}
+	entries, err := client.ListEntries(ctx, connect.NewRequest(&piv1.ListEntriesRequest{SessionId: id}))
+	if err != nil {
+		t.Fatalf("ListEntries: %v", err)
+	}
+	all := entries.Msg.GetEntries()
+	if len(all) != 4 || !strings.Contains(all[0].GetPayloadJson(), `"content":"first"`) {
+		t.Fatalf("ListEntries = %+v, want string user content preserved", entries.Msg)
+	}
+}
+
 func TestServiceErrorCodes(t *testing.T) {
 	client, ctx := newTestClient(t, Config{MaxSessions: 4, SandboxRoot: t.TempDir()})
 
