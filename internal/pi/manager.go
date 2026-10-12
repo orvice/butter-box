@@ -133,12 +133,21 @@ type session struct {
 	cwd      string
 	proc     *process
 	runSlot  chan struct{} // capacity 1: holding the token = running a prompt
-	turn     *turnState    // guarded by Manager.mu; non-nil while a submitted run is in flight
+	turn     *turnState    // guarded by Manager.mu; non-nil while a detached run is in flight
 	runEpoch uint64        // guarded by Manager.mu; advances whenever a prompt reserves the slot
-	lastUsed time.Time
+	// modelPending quarantines a timed-out set_model until its response or
+	// process exit. Guarded by Manager.mu; blocks sends and idle collection.
+	modelPending bool
+	// abortRequested latches explicit cancellation for the current reservation,
+	// including model setup and prompt preflight. Guarded by Manager.mu.
+	abortRequested bool
+	// abortPending prevents an outstanding native abort from reaching the
+	// next reservation. Guarded by Manager.mu, including dispatch ordering.
+	abortPending int
+	lastUsed     time.Time
 }
 
-// turnState tracks one detached (submitted) run.
+// turnState tracks one detached run, including unresolved prompt acceptance.
 type turnState struct {
 	done chan struct{} // closed when the run settles or the process exits
 }
@@ -398,13 +407,17 @@ func (m *Manager) Send(ctx context.Context, id, message string, images []ImageIn
 		return SendResult{}, err
 	}
 
-	if !m.acquireRun(s) {
-		return SendResult{}, ErrBusy
+	if err := m.acquireRun(s); err != nil {
+		return SendResult{}, err
 	}
-	defer m.releaseRun(s)
-
 	sub := s.proc.subscribe()
-	defer sub.Cancel()
+	detached := false
+	defer func() {
+		if !detached {
+			sub.Cancel()
+			m.releaseRun(s)
+		}
+	}()
 
 	cmd := map[string]any{"type": "prompt", "message": message}
 	if len(images) > 0 {
@@ -414,12 +427,34 @@ func (m *Manager) Send(ctx context.Context, id, message string, images []ImageIn
 		}
 		cmd["images"] = payload
 	}
-	if _, err := s.proc.callOK(ctx, cmd); err != nil {
+	if m.abortRequested(s) {
+		return SendResult{}, context.Canceled
+	}
+	resp, err := callPrompt(ctx, s.proc, cmd)
+	if err != nil {
+		if pending, ok := errors.AsType[*pendingCommandError](err); ok {
+			detached = true
+			m.startDetached(s, sub, pending, true)
+		}
 		return SendResult{}, err
 	}
+	if promptHandled(resp) {
+		return SendResult{}, nil
+	}
+	if m.abortRequested(s) {
+		if !m.abortProcess(s) {
+			detached = true
+			m.startDetached(s, sub, nil, false)
+		}
+		return SendResult{}, context.Canceled
+	}
 
-	stopReason, err := m.waitSettled(ctx, s.proc, sub, onEvent)
+	stopReason, idle, err := m.waitSettled(ctx, s, sub, onEvent)
 	if err != nil {
+		if !idle {
+			detached = true
+			m.startDetached(s, sub, nil, false)
+		}
 		return SendResult{}, err
 	}
 
@@ -439,13 +474,26 @@ func (m *Manager) Send(ctx context.Context, id, message string, images []ImageIn
 // restarts. The run is detached from ctx — cancelling the request never
 // aborts it; Abort is the only way to cancel. Await the result with Turn.
 func (m *Manager) Submit(ctx context.Context, id, message string, images []ImageInput) (string, error) {
+	result, err := m.SubmitWithModel(ctx, id, message, images, nil)
+	return result.Cursor, err
+}
+
+// SubmitResult reports the cursor and the selected model observed in Pi.
+type SubmitResult struct {
+	Cursor       string
+	AppliedModel *ModelSelection
+}
+
+// SubmitWithModel optionally selects an exact model before submitting the
+// prompt. Setup and the entire detached run share Send's run slot.
+func (m *Manager) SubmitWithModel(ctx context.Context, id, message string, images []ImageInput, selection *ModelSelection) (SubmitResult, error) {
 	s, err := m.attach(ctx, id)
 	if err != nil {
-		return "", err
+		return SubmitResult{}, err
 	}
 
-	if !m.acquireRun(s) {
-		return "", ErrBusy
+	if err := m.acquireRun(s); err != nil {
+		return SubmitResult{}, err
 	}
 
 	// The setup calls run on their own timeout, not the request context: once
@@ -454,10 +502,19 @@ func (m *Manager) Submit(ctx context.Context, id, message string, images []Image
 	setupCtx, cancel := context.WithTimeout(context.Background(), defaultSetupTimeout)
 	defer cancel()
 
+	applied, err := modelForSubmit(setupCtx, s.proc, selection)
+	if err != nil {
+		if pending, ok := errors.AsType[*pendingCommandError](err); ok {
+			m.quarantineModel(s, pending.completion)
+		}
+		m.releaseRun(s)
+		return SubmitResult{}, err
+	}
+
 	cursor, err := getLeafCursor(setupCtx, s.proc)
 	if err != nil {
 		m.releaseRun(s)
-		return "", err
+		return SubmitResult{}, err
 	}
 
 	sub := s.proc.subscribe()
@@ -470,30 +527,48 @@ func (m *Manager) Submit(ctx context.Context, id, message string, images []Image
 		}
 		cmd["images"] = payload
 	}
-	if _, err := s.proc.callOK(setupCtx, cmd); err != nil {
+	if m.abortRequested(s) {
 		sub.Cancel()
 		m.releaseRun(s)
-		return "", err
+		return SubmitResult{}, context.Canceled
 	}
-
-	t := &turnState{done: make(chan struct{})}
-	m.mu.Lock()
-	s.turn = t
-	m.mu.Unlock()
-
-	go m.finishDetached(s, t, sub)
+	resp, err := callPrompt(setupCtx, s.proc, cmd)
+	if err != nil {
+		if pending, ok := errors.AsType[*pendingCommandError](err); ok {
+			m.startDetached(s, sub, pending, false)
+		} else {
+			sub.Cancel()
+			m.releaseRun(s)
+		}
+		return SubmitResult{}, err
+	}
+	if promptHandled(resp) {
+		sub.Cancel()
+		m.releaseRun(s)
+	} else {
+		m.startDetached(s, sub, nil, false)
+	}
 
 	m.logger.Info("pi turn submitted",
 		slog.String("session_id", s.id),
 		slog.String("turn_cursor", cursor),
 	)
-	return cursor, nil
+	return SubmitResult{Cursor: cursor, AppliedModel: applied}, nil
 }
 
-// finishDetached consumes events until the submitted run settles (or the
-// process exits), then releases the session. It holds the run slot for the
-// whole run, which also keeps the idle janitor away.
-func (m *Manager) finishDetached(s *session, t *turnState, sub *subscription) {
+// startDetached transfers the slot and subscription to background supervision,
+// including an outstanding prompt acknowledgement when pending is non-nil.
+func (m *Manager) startDetached(s *session, sub *subscription, pending *pendingCommandError, abortOnAcceptance bool) {
+	t := &turnState{done: make(chan struct{})}
+	m.mu.Lock()
+	s.turn = t
+	m.mu.Unlock()
+	go m.finishDetached(s, t, sub, pending, abortOnAcceptance)
+}
+
+// finishDetached holds the slot through late acceptance and the entire run,
+// until definitive rejection, settlement, confirmed abort, or process exit.
+func (m *Manager) finishDetached(s *session, t *turnState, sub *subscription, pending *pendingCommandError, abortOnAcceptance bool) {
 	defer func() {
 		m.mu.Lock()
 		if s.turn == t {
@@ -505,14 +580,27 @@ func (m *Manager) finishDetached(s *session, t *turnState, sub *subscription) {
 	}()
 	defer sub.Cancel()
 
+	if pending != nil {
+		outcome := <-pending.completion
+		if outcome.err != nil || !outcome.response.Success || promptHandled(outcome.response) {
+			return // definitive rejection, process exit, or no run started
+		}
+	}
+	// Request cancellation or explicit AbortSession can precede acceptance.
+	// Replay cancellation after acknowledgement so native preflight cannot
+	// start a run after an earlier abort was acknowledged while Pi was idle.
+	if (abortOnAcceptance || m.abortRequested(s)) && m.abortProcess(s) {
+		return
+	}
+
 	// Background context: nothing cancels a detached run except Abort or the
 	// process dying (which closes the subscription).
-	if _, err := m.waitSettled(context.Background(), s.proc, sub, nil); err != nil {
-		m.logger.Warn("submitted pi run ended without settling",
+	if _, _, err := m.waitSettled(context.Background(), s, sub, nil); err != nil {
+		m.logger.Warn("detached pi run ended without settling",
 			slog.String("session_id", s.id), slog.Any("error", err))
 		return
 	}
-	m.logger.Info("submitted pi run settled", slog.String("session_id", s.id))
+	m.logger.Info("detached pi run settled", slog.String("session_id", s.id))
 }
 
 // Turn reports the state of the run submitted at cursor. wait=0 answers
@@ -683,7 +771,7 @@ func (m *Manager) Entries(ctx context.Context, id, cursor string) (EntriesResult
 	// The slot also covers Send and prompt setup, before pi starts streaming.
 	m.mu.Lock()
 	epoch := s.runEpoch
-	running := len(s.runSlot) != 0
+	running := len(s.runSlot) != 0 || s.modelPending || s.abortPending != 0
 	m.mu.Unlock()
 	if !running {
 		state, err := getState(ctx, s.proc)
@@ -713,7 +801,7 @@ func (m *Manager) Entries(ctx context.Context, id, cursor string) (EntriesResult
 	// A concurrent prompt may start AND finish during get_entries. Comparing
 	// the epoch catches that case even when both running samples are idle.
 	m.mu.Lock()
-	out.Running = running || len(s.runSlot) != 0 || s.runEpoch != epoch
+	out.Running = running || len(s.runSlot) != 0 || s.modelPending || s.abortPending != 0 || s.runEpoch != epoch
 	m.mu.Unlock()
 
 	m.touch(s)
@@ -763,23 +851,32 @@ func getLeafCursor(ctx context.Context, proc *process) (string, error) {
 	return *payload.LeafID, nil
 }
 
-// waitSettled consumes events until agent_settled, tracking the last
-// assistant stop reason. Client cancellation aborts the in-flight run.
-func (m *Manager) waitSettled(ctx context.Context, proc *process, sub *subscription, onEvent func(string, []byte) error) (string, error) {
-	stopReason := ""
-	abort := func() {
-		abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if _, err := proc.callOK(abortCtx, map[string]any{"type": "abort"}); err != nil {
-			m.logger.Warn("pi abort after cancellation failed", slog.Any("error", err))
-		}
+// abortProcess reports whether Pi confirmed that the session is idle.
+func (m *Manager) abortProcess(s *session) bool {
+	m.mu.Lock()
+	s.abortPending++
+	m.mu.Unlock()
+	abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := m.dispatchAbort(abortCtx, s); err != nil {
+		m.logger.Warn("pi abort after cancellation failed", slog.Any("error", err))
+		return false
 	}
+	return true // Pi acknowledges abort only once the session is idle.
+}
+
+// waitSettled consumes events until agent_settled, tracking the last assistant
+// stop reason. The boolean reports whether settlement/abort/exit is confirmed;
+// an unconfirmed cancellation must retain background supervision of the slot.
+func (m *Manager) waitSettled(ctx context.Context, s *session, sub *subscription, onEvent func(string, []byte) error) (string, bool, error) {
+	proc := s.proc
+	stopReason := ""
 
 	for {
 		select {
 		case ev, ok := <-sub.Events():
 			if !ok {
-				return "", proc.exitError()
+				return "", true, proc.exitError()
 			}
 			if ev.Type == "message_end" {
 				var end assistantEnd
@@ -789,18 +886,18 @@ func (m *Manager) waitSettled(ctx context.Context, proc *process, sub *subscript
 			}
 			if onEvent != nil {
 				if err := onEvent(ev.Type, ev.raw); err != nil {
-					abort()
-					return "", err
+					idle := ev.Type == "agent_settled" || m.abortProcess(s)
+					return "", idle, err
 				}
 			}
 			if ev.Type == "agent_settled" {
-				return stopReason, nil
+				return stopReason, true, nil
 			}
 		case <-ctx.Done():
-			abort()
-			return "", ctx.Err()
+			idle := m.abortProcess(s)
+			return "", idle, ctx.Err()
 		case <-proc.done:
-			return "", proc.exitError()
+			return "", true, proc.exitError()
 		}
 	}
 }
@@ -941,12 +1038,47 @@ func getAvailableModels(ctx context.Context, proc *process) ([]Model, error) {
 func (m *Manager) Abort(ctx context.Context, id string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
+	if ok {
+		if len(s.runSlot) != 0 {
+			s.abortRequested = true
+		}
+		// Reserve before unlocking: a cancelled setup may release runSlot
+		// before this abort is dispatched. Keep the next reservation away.
+		s.abortPending++
+	}
 	m.mu.Unlock()
 	if !ok {
 		return nil
 	}
-	_, err := s.proc.callOK(ctx, map[string]any{"type": "abort"})
-	return err
+	return m.dispatchAbort(ctx, s)
+}
+
+// dispatchAbort consumes a pre-reserved abort operation. Its barrier stays
+// active across request cancellation until native acknowledgement/process exit.
+func (m *Manager) dispatchAbort(ctx context.Context, s *session) error {
+	resp, err := callRunCommand(ctx, s.proc, map[string]any{"type": "abort"})
+	if pending, ok := errors.AsType[*pendingCommandError](err); ok {
+		go func() {
+			<-pending.completion
+			m.releaseAbort(s)
+		}()
+	} else {
+		m.releaseAbort(s)
+	}
+	if err != nil {
+		return fmt.Errorf("pi abort: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("pi abort failed: %s", resp.Error)
+	}
+	return nil
+}
+
+func (m *Manager) releaseAbort(s *session) {
+	m.mu.Lock()
+	s.abortPending--
+	s.lastUsed = time.Now()
+	m.mu.Unlock()
 }
 
 // Delete stops the session process; with purge it also removes the session
@@ -1180,16 +1312,45 @@ func (m *Manager) appendSessionDir(args []string) []string {
 	return args
 }
 
-// acquireRun serializes prompt starts with Entries' epoch snapshots.
-func (m *Manager) acquireRun(s *session) bool {
+// quarantineModel prevents a timed-out native command from modifying a
+// subsequent run. Keep the original process: Pi has not persisted a new
+// session before its first user message, so stopping it could lose that ID.
+func (m *Manager) quarantineModel(s *session, completion <-chan commandOutcome) {
+	m.mu.Lock()
+	s.modelPending = true
+	m.mu.Unlock()
+	go func() {
+		<-completion
+		m.mu.Lock()
+		s.modelPending = false
+		s.lastUsed = time.Now()
+		m.mu.Unlock()
+	}()
+}
+
+func (m *Manager) abortRequested(s *session) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return s.abortRequested
+}
+
+// acquireRun serializes prompt starts with Entries' epoch snapshots.
+func (m *Manager) acquireRun(s *session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s.modelPending {
+		return fmt.Errorf("%w: previous set_model has not completed", ErrSetModel)
+	}
+	if s.abortPending != 0 {
+		return ErrBusy
+	}
 	select {
 	case s.runSlot <- struct{}{}:
 		s.runEpoch++
-		return true
+		s.abortRequested = false
+		return nil
 	default:
-		return false
+		return ErrBusy
 	}
 }
 
@@ -1208,7 +1369,7 @@ func (m *Manager) touch(s *session) {
 }
 
 // janitor stops sessions that have been idle past the timeout. A session
-// holding its run slot is mid-prompt and never collected.
+// holding its run slot or awaiting an unresolved model/abort is never collected.
 func (m *Manager) janitor() {
 	ticker := time.NewTicker(janitorInterval)
 	defer ticker.Stop()
@@ -1223,7 +1384,7 @@ func (m *Manager) janitor() {
 		var expired []*session
 		m.mu.Lock()
 		for id, s := range m.sessions {
-			if s.lastUsed.After(cutoff) {
+			if s.modelPending || s.abortPending != 0 || s.lastUsed.After(cutoff) {
 				continue
 			}
 			select {
