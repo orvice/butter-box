@@ -127,6 +127,10 @@ func (f *fakePi) emit(v any) {
 	if err != nil {
 		panic(err)
 	}
+	f.emitRaw(data)
+}
+
+func (f *fakePi) emitRaw(data []byte) {
 	f.outMu.Lock()
 	defer f.outMu.Unlock()
 	f.out.Write(data)
@@ -163,6 +167,20 @@ func (f *fakePi) handle(cmd map[string]any) {
 	case "get_last_assistant_text":
 		f.respond(cmd, map[string]any{"text": "echo: " + f.lastPrompt})
 	case "get_entries":
+		// Replay wire fixtures verbatim, including malformed JSON, at the
+		// subprocess boundary. Normal tests still use the append-only log.
+		if path := os.Getenv("FAKE_PI_ENTRIES_DATA"); path != "" {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				panic(err)
+			}
+			id, err := json.Marshal(cmd["id"])
+			if err != nil {
+				panic(err)
+			}
+			f.emitRaw(fmt.Appendf(nil, `{"type":"response","id":%s,"command":"get_entries","success":true,"data":%s}`, id, data))
+			return
+		}
 		entries, leaf, ok := f.entriesSince(cmd["since"])
 		if !ok {
 			f.emit(map[string]any{
@@ -257,11 +275,15 @@ func (f *fakePi) run(prompt string) {
 		f.emit(map[string]any{"type": "agent_settled"})
 	}()
 	f.emit(map[string]any{"type": "agent_start"})
+	var userContent any = []map[string]any{{"type": "text", "text": prompt}}
+	if os.Getenv("FAKE_PI_USER_CONTENT") == "string" {
+		userContent = prompt
+	}
 	f.appendEntry(map[string]any{
 		"type": "message",
 		"message": map[string]any{
 			"role":    "user",
-			"content": []map[string]any{{"type": "text", "text": prompt}},
+			"content": userContent,
 		},
 	})
 

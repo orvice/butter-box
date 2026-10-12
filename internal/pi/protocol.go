@@ -77,19 +77,13 @@ type modelData struct {
 	} `json:"cost"`
 }
 
-// entryData mirrors the fields of one session entry in get_entries' response
-// data we consume.
+// entryData projects an entry without decoding its role-dependent message.
+// Pi permits strings for user/system/custom content, but assistant content is
+// an array. Consumers must select the entry type and role before decoding it.
 type entryData struct {
-	Type    string `json:"type"`
-	ID      string `json:"id"`
-	Message struct {
-		Role       string `json:"role"`
-		StopReason string `json:"stopReason"`
-		Content    []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"message"`
+	Type    string          `json:"type"`
+	ID      string          `json:"id"`
+	Message json.RawMessage `json:"message"`
 }
 
 // entriesData mirrors get_entries' response data while keeping each entry

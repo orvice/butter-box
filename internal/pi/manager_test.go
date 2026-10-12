@@ -266,6 +266,30 @@ func TestSubmitAndGetTurn(t *testing.T) {
 	}
 }
 
+func TestTurnWithStringUserContent(t *testing.T) {
+	t.Setenv("FAKE_PI_USER_CONTENT", "string")
+	m := newFakeManager(t)
+	ctx := testCtx(t)
+	info, err := m.Create(ctx, CreateOpts{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	cursor, err := m.Submit(ctx, info.ID, "hello", nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	status, err := m.Turn(ctx, info.ID, cursor, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Turn with string user content: %v", err)
+	}
+	if status.Running || status.Result == nil {
+		t.Fatalf("status = %+v, want completed result", status)
+	}
+	if status.Result.Text != "echo: hello" || status.Result.StopReason != "stop" {
+		t.Fatalf("result = %+v, want echoed text and stop reason", status.Result)
+	}
+}
+
 func TestEntries(t *testing.T) {
 	m := newFakeManager(t)
 	ctx := testCtx(t)
