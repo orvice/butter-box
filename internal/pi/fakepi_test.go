@@ -40,9 +40,13 @@ type fakePi struct {
 	entriesMu sync.Mutex
 	entries   []map[string]any
 	nextEntry int
+	provider  string // guarded by entriesMu, like the model_change log
+	modelID   string
+	runDone   chan struct{} // closed after terminal events; guarded by entriesMu
 
 	// Test-only gate: hold one entries response after taking its snapshot.
 	entriesHeld bool
+	promptHeld  bool
 }
 
 // appendEntry records one session entry, mimicking pi's entry log.
@@ -98,6 +102,8 @@ func fakePiMain() {
 		sessionID: fakeSessionID,
 		uiResp:    make(chan map[string]any, 1),
 		abortCh:   make(chan struct{}, 1),
+		provider:  "fake",
+		modelID:   "fake-model",
 	}
 
 	// `--session <id>`: pi silently starts a fresh session when the ID is
@@ -151,17 +157,39 @@ func (f *fakePi) respond(cmd map[string]any, data any) {
 	f.emit(resp)
 }
 
+func (f *fakePi) reject(cmd map[string]any, message string) {
+	f.emit(map[string]any{"type": "response", "id": cmd["id"], "command": cmd["type"], "success": false, "error": message})
+}
+
 func (f *fakePi) handle(cmd map[string]any) {
+	recordFakeCommand(cmd)
 	switch cmd["type"] {
 	case "get_state":
+		f.entriesMu.Lock()
+		model := map[string]any{"id": f.modelID, "provider": f.provider}
+		f.entriesMu.Unlock()
 		f.respond(cmd, map[string]any{
-			"model":        map[string]any{"id": "fake-model", "provider": "fake"},
+			"model":        model,
 			"isStreaming":  f.streaming.Load(),
 			"sessionFile":  "/tmp/" + f.sessionID + ".jsonl",
 			"sessionId":    f.sessionID,
 			"sessionName":  "fake",
 			"messageCount": 1,
 		})
+	case "set_model":
+		if gate := os.Getenv("FAKE_PI_MODEL_GATE"); gate != "" {
+			if err := os.WriteFile(filepath.Join(gate, "captured"), nil, 0o600); err != nil {
+				panic(err)
+			}
+			go func() {
+				if err := waitForFakeFile(context.Background(), filepath.Join(gate, "release")); err != nil {
+					panic(err)
+				}
+				f.setModel(cmd)
+			}()
+		} else {
+			f.setModel(cmd)
+		}
 	case "set_thinking_level":
 		f.respond(cmd, nil)
 	case "get_last_assistant_text":
@@ -242,11 +270,23 @@ func (f *fakePi) handle(cmd map[string]any) {
 			"contextUsage": map[string]any{"percent": 12.0},
 		})
 	case "abort":
-		select {
-		case f.abortCh <- struct{}{}:
-		default:
+		if os.Getenv("FAKE_PI_ABORT_ERROR") == "1" {
+			f.reject(cmd, "abort failed")
+			return
 		}
-		f.respond(cmd, nil)
+		if gate := os.Getenv("FAKE_PI_ABORT_GATE"); gate != "" {
+			if err := os.WriteFile(filepath.Join(gate, "captured"), nil, 0o600); err != nil {
+				panic(err)
+			}
+			go func() {
+				if err := waitForFakeFile(context.Background(), filepath.Join(gate, "release")); err != nil {
+					panic(err)
+				}
+				f.acceptAbort(cmd)
+			}()
+		} else {
+			f.acceptAbort(cmd)
+		}
 	case "extension_ui_response":
 		f.uiResp <- cmd
 	case "prompt":
@@ -254,9 +294,25 @@ func (f *fakePi) handle(cmd map[string]any) {
 		if f.lastPrompt == "crash" {
 			os.Exit(1)
 		}
-		f.streaming.Store(true)
-		f.respond(cmd, nil)
-		go f.run(f.lastPrompt)
+		if f.lastPrompt == "reject prompt" {
+			f.reject(cmd, "prompt rejected")
+			return
+		}
+		if gate := os.Getenv("FAKE_PI_PROMPT_GATE"); gate != "" && !f.promptHeld {
+			f.promptHeld = true
+			if err := os.WriteFile(filepath.Join(gate, "captured"), nil, 0o600); err != nil {
+				panic(err)
+			}
+			prompt := f.lastPrompt
+			go func() {
+				if err := waitForFakeFile(context.Background(), filepath.Join(gate, "release")); err != nil {
+					panic(err)
+				}
+				f.acceptPrompt(cmd, prompt)
+			}()
+		} else {
+			f.acceptPrompt(cmd, f.lastPrompt)
+		}
 	default:
 		f.emit(map[string]any{
 			"type":    "response",
@@ -268,8 +324,72 @@ func (f *fakePi) handle(cmd map[string]any) {
 	}
 }
 
+func (f *fakePi) acceptAbort(cmd map[string]any) {
+	if f.streaming.Load() {
+		select {
+		case f.abortCh <- struct{}{}:
+		default:
+		}
+	}
+	f.entriesMu.Lock()
+	done := f.runDone
+	f.entriesMu.Unlock()
+	go func() {
+		// Like native Pi, acknowledge after terminal events are emitted.
+		if done != nil {
+			<-done
+		}
+		f.respond(cmd, nil)
+	}()
+}
+
+func (f *fakePi) acceptPrompt(cmd map[string]any, prompt string) {
+	if prompt == "handled prompt" {
+		f.respond(cmd, map[string]any{"disposition": "handled"})
+		return
+	}
+	if prompt == "late reject prompt" {
+		f.reject(cmd, "prompt rejected")
+		return
+	}
+	done := make(chan struct{})
+	f.entriesMu.Lock()
+	f.runDone = done
+	f.streaming.Store(true)
+	provider, modelID := f.provider, f.modelID
+	f.entriesMu.Unlock()
+	f.respond(cmd, map[string]any{"disposition": "started"})
+	go func() {
+		defer close(done)
+		f.run(prompt, provider, modelID)
+	}()
+}
+
+func (f *fakePi) setModel(cmd map[string]any) {
+	provider, _ := cmd["provider"].(string)
+	modelID, _ := cmd["modelId"].(string)
+	switch {
+	case provider == "unauthenticated":
+		f.reject(cmd, "No API key for "+provider+"/"+modelID)
+		return
+	case provider == "broken":
+		f.reject(cmd, "model_select extension failed")
+		return
+	case (provider != "fake" && provider != "other") || (modelID != "fake-model" && modelID != "fake-mini"):
+		f.reject(cmd, "Model not found: "+provider+"/"+modelID)
+		return
+	}
+	if os.Getenv("FAKE_PI_SET_MODEL_NOOP") != "1" {
+		f.entriesMu.Lock()
+		f.provider, f.modelID = provider, modelID
+		f.entriesMu.Unlock()
+		f.appendEntry(map[string]any{"type": "model_change", "provider": provider, "modelId": modelID})
+	}
+	f.respond(cmd, map[string]any{"id": modelID, "provider": provider})
+}
+
 // run emits one agent run's event stream.
-func (f *fakePi) run(prompt string) {
+func (f *fakePi) run(prompt, provider, modelID string) {
 	defer func() {
 		f.streaming.Store(false)
 		f.emit(map[string]any{"type": "agent_settled"})
@@ -303,7 +423,11 @@ func (f *fakePi) run(prompt string) {
 	}
 
 	if prompt == "gated run" {
-		if err := waitForFakeFile(context.Background(), filepath.Join(os.Getenv("FAKE_PI_ENTRIES_GATE"), "finish")); err != nil {
+		gate := os.Getenv("FAKE_PI_ENTRIES_GATE")
+		if err := os.WriteFile(filepath.Join(gate, "started"), nil, 0o600); err != nil {
+			panic(err)
+		}
+		if err := waitForFakeFile(context.Background(), filepath.Join(gate, "finish")); err != nil {
 			panic(err)
 		}
 	}
@@ -320,6 +444,8 @@ func (f *fakePi) run(prompt string) {
 		"type": "message",
 		"message": map[string]any{
 			"role":       "assistant",
+			"provider":   provider,
+			"model":      modelID,
 			"stopReason": "stop",
 			"content": []map[string]any{
 				{"type": "thinking", "thinking": "hmm"},

@@ -11,6 +11,12 @@ option go_package = "github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1;piv1
 // (~/.pi/agent), so an inactive session can be re-attached transparently and
 // every session is visible in pi-web.
 service PiService {
+  // GetCapabilities reports Box API features without starting a Pi process.
+  // Before sending model_selection, clients MUST require
+  // submit_message_model_selection=true. Unimplemented, absent, or false
+  // means unsupported: older Boxes may silently ignore new protobuf fields.
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+
   // CreateSession spawns a new pi session process.
   rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
 
@@ -41,7 +47,9 @@ service PiService {
   // SubmitMessage accepts one prompt and returns immediately with a turn
   // cursor. The run is detached from the request lifetime: a dropped
   // connection never aborts it. Poll or long-poll the run with GetTurn;
-  // AbortSession is the only way to cancel it.
+  // AbortSession is the only way to cancel it. A prompt acknowledgement
+  // timeout may still lead to an accepted turn; do not automatically retry.
+  // Its run slot remains reserved through rejection or full settlement.
   rpc SubmitMessage(SubmitMessageRequest) returns (SubmitMessageResponse);
 
   // GetTurn reports whether the run submitted at turn_cursor is still in
@@ -66,6 +74,13 @@ service PiService {
   // DeleteSession stops the session process. The session file on disk is
   // kept unless purge is set.
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+}
+
+message GetCapabilitiesRequest {}
+
+message GetCapabilitiesResponse {
+  // Supports atomic model selection + prompt submission and applied_model.
+  bool submit_message_model_selection = 1;
 }
 
 message CreateSessionRequest {
@@ -131,10 +146,20 @@ message StreamMessageResponse {
   string payload_json = 2;
 }
 
+// Exact Pi model identity; model_id alone is not unique across providers.
+message ModelSelection {
+  string provider = 1;
+  string model_id = 2;
+}
+
 message SubmitMessageRequest {
   string session_id = 1;
   string message = 2;
   repeated ImageContent images = 3;
+  // Optional. When absent, use the session's current model. When present,
+  // both fields must be non-empty. Applied before prompt under the same run
+  // slot as every ButterBox send entry point; no fuzzy matching.
+  ModelSelection model_selection = 4;
 }
 
 message SubmitMessageResponse {
@@ -142,6 +167,10 @@ message SubmitMessageResponse {
   // a session with no entries yet. Stable across process restarts — pass it
   // to GetTurn to await or recover this turn's result.
   string turn_cursor = 1;
+  // Actual selected model read from Pi after setup, not a request echo.
+  // Unset when Pi reports no model. For virtual models this is the selected
+  // router, not necessarily the physical model producing the assistant reply.
+  ModelSelection applied_model = 2;
 }
 
 message GetTurnRequest {
@@ -185,7 +214,8 @@ message ListEntriesResponse {
   // The session's current leaf entry id ("" for a session with no entries).
   // Pass it as after_cursor to poll for what comes next.
   string leaf_id = 2;
-  // True while a run is in flight; more entries will appear.
+  // True while a run, model setup, or abort is in flight; entries may appear.
+  // Includes native commands still resolving after a setup/control timeout.
   bool running = 3;
 }
 

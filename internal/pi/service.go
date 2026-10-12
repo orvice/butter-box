@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	piv1 "github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1"
 )
@@ -18,6 +19,10 @@ type Service struct {
 
 func NewService(manager *Manager) *Service {
 	return &Service{manager: manager}
+}
+
+func (s *Service) GetCapabilities(_ context.Context, _ *connect.Request[piv1.GetCapabilitiesRequest]) (*connect.Response[piv1.GetCapabilitiesResponse], error) {
+	return connect.NewResponse(&piv1.GetCapabilitiesResponse{SubmitMessageModelSelection: true}), nil
 }
 
 func (s *Service) CreateSession(ctx context.Context, req *connect.Request[piv1.CreateSessionRequest]) (*connect.Response[piv1.CreateSessionResponse], error) {
@@ -102,11 +107,19 @@ func (s *Service) StreamMessage(ctx context.Context, req *connect.Request[piv1.S
 }
 
 func (s *Service) SubmitMessage(ctx context.Context, req *connect.Request[piv1.SubmitMessageRequest]) (*connect.Response[piv1.SubmitMessageResponse], error) {
-	cursor, err := s.manager.Submit(ctx, req.Msg.GetSessionId(), req.Msg.GetMessage(), imagesInput(req.Msg.GetImages()))
+	var selection *ModelSelection
+	if model := req.Msg.GetModelSelection(); model != nil {
+		selection = &ModelSelection{Provider: model.GetProvider(), ModelID: model.GetModelId()}
+	}
+	result, err := s.manager.SubmitWithModel(ctx, req.Msg.GetSessionId(), req.Msg.GetMessage(), imagesInput(req.Msg.GetImages()), selection)
 	if err != nil {
 		return nil, rpcError(err)
 	}
-	return connect.NewResponse(&piv1.SubmitMessageResponse{TurnCursor: cursor}), nil
+	resp := &piv1.SubmitMessageResponse{TurnCursor: result.Cursor}
+	if model := result.AppliedModel; model != nil {
+		resp.AppliedModel = &piv1.ModelSelection{Provider: model.Provider, ModelId: model.ModelID}
+	}
+	return connect.NewResponse(resp), nil
 }
 
 func (s *Service) GetTurn(ctx context.Context, req *connect.Request[piv1.GetTurnRequest]) (*connect.Response[piv1.GetTurnResponse], error) {
@@ -199,13 +212,26 @@ func rpcError(err error) error {
 		return connect.NewError(connect.CodeCanceled, err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return connect.NewError(connect.CodeDeadlineExceeded, err)
+	case errors.Is(err, ErrInvalidModel):
+		return modelRPCError(connect.CodeInvalidArgument, "PI_MODEL_INVALID", err)
+	case errors.Is(err, ErrModelAuth):
+		return modelRPCError(connect.CodeUnauthenticated, "PI_MODEL_AUTH_UNAVAILABLE", err)
+	case errors.Is(err, ErrSetModel):
+		return modelRPCError(connect.CodeFailedPrecondition, "PI_MODEL_SET_FAILED", err)
 	default:
-		var connectErr *connect.Error
-		if errors.As(err, &connectErr) {
+		if _, ok := errors.AsType[*connect.Error](err); ok {
 			return err
 		}
 		return connect.NewError(connect.CodeInternal, err)
 	}
+}
+
+func modelRPCError(code connect.Code, reason string, cause error) error {
+	err := connect.NewError(code, cause)
+	if detail, detailErr := connect.NewErrorDetail(&errdetails.ErrorInfo{Reason: reason, Domain: "butterbox.pi"}); detailErr == nil {
+		err.AddDetail(detail)
+	}
+	return err
 }
 
 func sessionProto(info Info) *piv1.Session {

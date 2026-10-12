@@ -158,7 +158,7 @@ Each session maps to a supervised `pi --mode rpc` child process speaking pi's JS
 
 `CreateSession` accepts an optional `cwd` — the working directory for the pi process, absolute or relative to `SANDBOX_ROOT`. It must resolve inside the sandbox root and exist, or the call fails with `invalid_argument`; empty keeps the server's own working directory. The effective directory is reported back on the `Session` message, and re-attached sessions are respawned in the session's recorded cwd (read back from pi's session file header when needed).
 
-RPCs: `CreateSession`, `ListSessions` (every session on the box, newest first: active processes plus inactive sessions found on disk, each flagged `active` and stamped `updated_at_unix`), `GetSession`, `ListEntries` (the session transcript — see below), `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+RPCs: `GetCapabilities` (Box API feature detection; no Pi process needed), `CreateSession`, `ListSessions` (every session on the box, newest first: active processes plus inactive sessions found on disk, each flagged `active` and stamped `updated_at_unix`), `GetSession`, `ListEntries` (the session transcript — see below), `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
 
 `ListEntries` is what a chat client renders from: it returns the session's entries verbatim as pi JSON (`message`, `model_change`, ... — each with its entry `id`), re-attaching the session if needed. Empty `after_cursor` returns the full transcript; passing the last entry id already seen (or a `SubmitMessage` turn cursor) returns only what came after, so a refresh loop polls incrementally. The response carries the current `leaf_id` (the next natural cursor) and `running` — during an in-flight run the listing grows as entries are recorded, so a polling client sees tool activity before the turn settles. An unknown cursor fails with `invalid_argument`.
 
@@ -167,6 +167,54 @@ RPCs: `CreateSession`, `ListSessions` (every session on the box, newest first: a
 `ListDirectories` lists the immediate subdirectories of one directory for a working-directory picker: `path` empty means `SANDBOX_ROOT`, anything else must resolve inside it (same rules as `cwd` and the MCP tools) and be an existing directory, or the call fails with `invalid_argument`. One level per call, no recursion and no file contents; dot-directories are skipped unless `include_hidden` is set, symlinked directories are never reported, and a listing over 500 entries comes back with `truncated: true`. Each entry's `path` is absolute, so it feeds straight back in as the next `ListDirectories` path or as `CreateSession.cwd`.
 
 For long runs prefer the async pair over `SendMessage`: `SubmitMessage` detaches the run from the request lifetime (a dropped connection never aborts it; `AbortSession` is the only way to cancel) and returns pi's entries cursor at submit time, which is stable across process restarts. `GetTurn` with `wait_seconds: 0` is a pure poll; `wait_seconds > 0` long-polls up to 30s. Completion is judged from the session entries after the cursor, so a box restart mid-run reports an honest "did not finish" (`running: false` with no `result`) instead of a stale previous answer. Submitting while a run is in flight returns the same busy error as `SendMessage`.
+
+### Select a model for the next turn
+
+`SubmitMessage` accepts optional `model_selection: {provider, model_id}`. Omit it to keep the session's current model; when present, both fields must be non-empty and are matched exactly (case-sensitive, no fuzzy matching). The provider is part of the identity, so two providers offering the same model ID are distinct. To switch back, submit the original provider/model ID. Resolving an Agent default is the caller's responsibility.
+
+**Before sending a selection, clients must call `GetCapabilities` and require `submit_message_model_selection: true`.** An unimplemented/unknown RPC, a missing field, or `false` means unsupported: refuse the selected-model send or ask the user to upgrade the Box. Do not silently fall back to an unselected request. Older Boxes may ignore unknown protobuf fields and otherwise execute the wrong model successfully. Capability detection needs only Box authentication, not Pi credentials or a free session slot.
+
+ButterBox attaches the original session and reserves the same run slot used by `SendMessage` and `StreamMessage` **before** calling Pi's native `set_model`. It waits for success, verifies the selected identity using `get_state`, then captures the entries cursor and submits the prompt. Busy requests never modify the model. The successful response includes `applied_model: {provider, model_id}` read from Pi, not echoed from the request. With a virtual model this identifies the selected router; the assistant entry records the physical model that answered.
+
+Selection is validated by the live session's Pi process, not the potentially cached Box catalog. Pi handles authentication, session `model_change` records, and reasoning/thinking-level clamping. Every explicit selection invokes `set_model`, including a repeated selection of the current model, to recheck authentication; this release does not suppress duplicate `model_change` entries. No Chat thinking-level option is added. The model changes only within that session: session ID, file, cwd, history, Box defaults, and credentials remain unchanged, including after idle stop/re-attach.
+
+Model-selection errors carry a `google.rpc.ErrorInfo` detail (domain `butterbox.pi`):
+
+| Code | Reason | Meaning |
+| --- | --- | --- |
+| `invalid_argument` | `PI_MODEL_INVALID` | Incomplete selection, or Pi cannot find that exact available model |
+| `unauthenticated` | `PI_MODEL_AUTH_UNAVAILABLE` | Pi reports missing model authentication |
+| `failed_precondition` | `PI_MODEL_SET_FAILED` | Other `set_model` failures, or Pi did not apply the selected identity |
+
+Pi 1.1.0 reports string errors (`Model not found: ...`, `No API key for ...`); unknown errors remain set failures rather than being guessed as busy. Providers without usable authentication may be absent from Pi's available snapshot and therefore report `PI_MODEL_INVALID`. Existing busy, not-found, capacity, and deadline codes retain their semantics. Rejected model setup sends no prompt and releases the slot; uncertain native commands follow the supervision rules below. ButterBox never creates a replacement session or automatically retries a prompt.
+
+A `set_model` setup timeout stops waiting, but cannot cancel Pi's native command. ButterBox releases the slot and quarantines that session: all send entry points return `PI_MODEL_SET_FAILED` until the outstanding command responds or the process exits. The idle janitor also skips it, and `ListEntries.running` includes this unresolved setup. No prompt is sent for the timed-out setup. This retains the original process/ID, including a new session that Pi has not yet persisted (Pi 1.1.0 writes its session file only after the first user/assistant message). An indefinitely stalled command can therefore retain session capacity until it resolves or the process is stopped; a timeout is not proof the model remained unchanged.
+
+A prompt acknowledgement timeout is likewise **not proof of rejection**. ButterBox retains its event subscription and run slot until Pi definitively rejects the prompt, the process exits, or the late-accepted run fully settles. Other sends remain busy throughout preflight and the run. `AbortSession` latches cancellation for the current reservation, including preflight: an early native idle acknowledgement cannot allow a late-accepted prompt to escape cancellation. Cancellation before prompt submission suppresses that prompt (without rolling back any model change). `SendMessage`/`StreamMessage` cancellation during preflight aborts after late acceptance; an unconfirmed abort retains supervision until settlement. This prevents a competing selection from changing the model of an ambiguously accepted prompt. Do not automatically retry a failed submit whose prompt may have been accepted; inspect the transcript/turn or use `AbortSession`. An outstanding native abort, including one whose RPC disconnected/timed out, blocks new sends and idle collection until its correlated response or process exit. `ListEntries.running` includes that pending control operation, preventing cancellation of an old reservation from leaking into the next one.
+
+This is serialized setup, **not a transaction**: Pi may already have changed the model when a later setup/prompt call fails, and ButterBox does not roll it back. Accepted turns remain detached from the request, are polled through `GetTurn`, and are cancelled through `AbortSession`. The lock covers ButterBox's send entry points, not external processes/extensions independently modifying the session or its file.
+
+```bash
+# Require submitMessageModelSelection=true before sending a selection.
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/GetCapabilities \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' -d '{}'
+
+curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/SubmitMessage \
+  -H 'Authorization: Bearer secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<id>","message":"Continue the task","model_selection":{"provider":"anthropic","model_id":"<exact-model-id>"}}'
+```
+
+### Pi API verification
+
+Run `go build ./...`, `buf lint`, and `go test ./...`. The RPC contract tests use a fake Pi subprocess, including gated model setup, late `set_model`/prompt responses after the real 60-second setup deadline, competing send entry points, and request disconnection/cancellation. For the installed Pi runtime (verified with **1.1.0**), run:
+
+```bash
+BUTTERBOX_PI_SMOKE=1 go test ./internal/pi -run '^TestRealPiModelSelectionSmoke$' -count=1 -v
+```
+
+This opt-in smoke test uses temporary Pi configuration/session directories and a local OpenAI-compatible endpoint, not paid APIs or existing Box data. It verifies `get_state`, `model_change`, assistant provider/model identity, reasoning-to-non-reasoning switching, unchanged global config/history, and the real idle janitor followed by re-attach (allow about one minute). It does not verify a deployment's external provider credentials; validate those separately when deploying.
 
 ConnectRPC speaks plain JSON over HTTP POST, so curl works:
 

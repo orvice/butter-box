@@ -33,6 +33,9 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// PiServiceGetCapabilitiesProcedure is the fully-qualified name of the PiService's GetCapabilities
+	// RPC.
+	PiServiceGetCapabilitiesProcedure = "/butterbox.pi.v1.PiService/GetCapabilities"
 	// PiServiceCreateSessionProcedure is the fully-qualified name of the PiService's CreateSession RPC.
 	PiServiceCreateSessionProcedure = "/butterbox.pi.v1.PiService/CreateSession"
 	// PiServiceListSessionsProcedure is the fully-qualified name of the PiService's ListSessions RPC.
@@ -63,6 +66,11 @@ const (
 
 // PiServiceClient is a client for the butterbox.pi.v1.PiService service.
 type PiServiceClient interface {
+	// GetCapabilities reports Box API features without starting a Pi process.
+	// Before sending model_selection, clients MUST require
+	// submit_message_model_selection=true. Unimplemented, absent, or false
+	// means unsupported: older Boxes may silently ignore new protobuf fields.
+	GetCapabilities(context.Context, *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error)
 	// CreateSession spawns a new pi session process.
 	CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error)
 	// ListSessions reports every session on this box, newest first: sessions
@@ -87,7 +95,9 @@ type PiServiceClient interface {
 	// SubmitMessage accepts one prompt and returns immediately with a turn
 	// cursor. The run is detached from the request lifetime: a dropped
 	// connection never aborts it. Poll or long-poll the run with GetTurn;
-	// AbortSession is the only way to cancel it.
+	// AbortSession is the only way to cancel it. A prompt acknowledgement
+	// timeout may still lead to an accepted turn; do not automatically retry.
+	// Its run slot remains reserved through rejection or full settlement.
 	SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error)
 	// GetTurn reports whether the run submitted at turn_cursor is still in
 	// flight, optionally waiting for it to settle, and returns its result once
@@ -120,6 +130,12 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 	baseURL = strings.TrimRight(baseURL, "/")
 	piServiceMethods := v1.File_butterbox_pi_v1_pi_proto.Services().ByName("PiService").Methods()
 	return &piServiceClient{
+		getCapabilities: connect.NewClient[v1.GetCapabilitiesRequest, v1.GetCapabilitiesResponse](
+			httpClient,
+			baseURL+PiServiceGetCapabilitiesProcedure,
+			connect.WithSchema(piServiceMethods.ByName("GetCapabilities")),
+			connect.WithClientOptions(opts...),
+		),
 		createSession: connect.NewClient[v1.CreateSessionRequest, v1.CreateSessionResponse](
 			httpClient,
 			baseURL+PiServiceCreateSessionProcedure,
@@ -197,6 +213,7 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 
 // piServiceClient implements PiServiceClient.
 type piServiceClient struct {
+	getCapabilities    *connect.Client[v1.GetCapabilitiesRequest, v1.GetCapabilitiesResponse]
 	createSession      *connect.Client[v1.CreateSessionRequest, v1.CreateSessionResponse]
 	listSessions       *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	listEntries        *connect.Client[v1.ListEntriesRequest, v1.ListEntriesResponse]
@@ -209,6 +226,11 @@ type piServiceClient struct {
 	listDirectories    *connect.Client[v1.ListDirectoriesRequest, v1.ListDirectoriesResponse]
 	abortSession       *connect.Client[v1.AbortSessionRequest, v1.AbortSessionResponse]
 	deleteSession      *connect.Client[v1.DeleteSessionRequest, v1.DeleteSessionResponse]
+}
+
+// GetCapabilities calls butterbox.pi.v1.PiService.GetCapabilities.
+func (c *piServiceClient) GetCapabilities(ctx context.Context, req *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error) {
+	return c.getCapabilities.CallUnary(ctx, req)
 }
 
 // CreateSession calls butterbox.pi.v1.PiService.CreateSession.
@@ -273,6 +295,11 @@ func (c *piServiceClient) DeleteSession(ctx context.Context, req *connect.Reques
 
 // PiServiceHandler is an implementation of the butterbox.pi.v1.PiService service.
 type PiServiceHandler interface {
+	// GetCapabilities reports Box API features without starting a Pi process.
+	// Before sending model_selection, clients MUST require
+	// submit_message_model_selection=true. Unimplemented, absent, or false
+	// means unsupported: older Boxes may silently ignore new protobuf fields.
+	GetCapabilities(context.Context, *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error)
 	// CreateSession spawns a new pi session process.
 	CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error)
 	// ListSessions reports every session on this box, newest first: sessions
@@ -297,7 +324,9 @@ type PiServiceHandler interface {
 	// SubmitMessage accepts one prompt and returns immediately with a turn
 	// cursor. The run is detached from the request lifetime: a dropped
 	// connection never aborts it. Poll or long-poll the run with GetTurn;
-	// AbortSession is the only way to cancel it.
+	// AbortSession is the only way to cancel it. A prompt acknowledgement
+	// timeout may still lead to an accepted turn; do not automatically retry.
+	// Its run slot remains reserved through rejection or full settlement.
 	SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error)
 	// GetTurn reports whether the run submitted at turn_cursor is still in
 	// flight, optionally waiting for it to settle, and returns its result once
@@ -326,6 +355,12 @@ type PiServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	piServiceMethods := v1.File_butterbox_pi_v1_pi_proto.Services().ByName("PiService").Methods()
+	piServiceGetCapabilitiesHandler := connect.NewUnaryHandler(
+		PiServiceGetCapabilitiesProcedure,
+		svc.GetCapabilities,
+		connect.WithSchema(piServiceMethods.ByName("GetCapabilities")),
+		connect.WithHandlerOptions(opts...),
+	)
 	piServiceCreateSessionHandler := connect.NewUnaryHandler(
 		PiServiceCreateSessionProcedure,
 		svc.CreateSession,
@@ -400,6 +435,8 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 	)
 	return "/butterbox.pi.v1.PiService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case PiServiceGetCapabilitiesProcedure:
+			piServiceGetCapabilitiesHandler.ServeHTTP(w, r)
 		case PiServiceCreateSessionProcedure:
 			piServiceCreateSessionHandler.ServeHTTP(w, r)
 		case PiServiceListSessionsProcedure:
@@ -432,6 +469,10 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 
 // UnimplementedPiServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedPiServiceHandler struct{}
+
+func (UnimplementedPiServiceHandler) GetCapabilities(context.Context, *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.GetCapabilities is not implemented"))
+}
 
 func (UnimplementedPiServiceHandler) CreateSession(context.Context, *connect.Request[v1.CreateSessionRequest]) (*connect.Response[v1.CreateSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.CreateSession is not implemented"))
