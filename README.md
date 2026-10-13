@@ -24,8 +24,10 @@ The container image is based on `ubuntu:24.04`, runs as the non-root user `butte
 - Common CLI tools: `git`, `curl`, `wget`, `jq`, `ripgrep`, `unzip`, `zip`, `build-essential`, `openssh-client`, `vim`, `kubectl`
 - Cloud tools: `aws` (AWS CLI v2), `gcloud` (Google Cloud CLI), `rclone`, `logcli` (Grafana Loki)
 - Dev platform CLIs: `gh` (GitHub), `glab` (GitLab), [`op`](https://developer.1password.com/docs/cli/) (1Password), `gog`, `td` (Todoist)
-- Coding agent CLIs: `codex`, `opencode` (`/usr/bin/opencode`), `pi`, `pi-web` ([@agegr/pi-web](https://github.com/agegr/pi-web), browser UI for `pi`)
+- Coding agent CLIs: `codex`, [`agent`](https://cursor.com/docs/cli/overview) / `cursor-agent` (Cursor CLI, pinned to `2026.10.01-e373342`), `opencode` (`/usr/bin/opencode`), `pi`, `pi-web` ([@agegr/pi-web](https://github.com/agegr/pi-web), browser UI for `pi`)
 - [`gws`](https://github.com/googleworkspace/cli) — Google Workspace CLI (Drive, Gmail, Calendar, Sheets, and more)
+
+Cursor CLI is installed under `/opt/cursor-agent`, with both commands on the system `PATH`, so mounting a persistent home directory does not hide it. Run `agent login` for interactive authentication, or set `CURSOR_API_KEY` for headless use; `agent status` checks authentication. This CLI is separate from the `cursor-sdk-bridge` used by the [Cursor API](#cursor-api).
 
 ## Local Run
 

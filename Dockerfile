@@ -14,6 +14,9 @@ FROM ubuntu:24.04
 ARG GO_VERSION=1.27.1
 ARG NODE_MAJOR=24
 ARG LOKI_VERSION=3.7.8
+ARG CURSOR_CLI_VERSION=2026.10.01-e373342
+ARG CURSOR_CLI_SHA256_AMD64=a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8
+ARG CURSOR_CLI_SHA256_ARM64=785c5f6bf2a60eb1121e27ed8c14f5ee07ed1b5b6692324f2d9a997238245eb5
 ARG CURSOR_SDK_BRIDGE_VERSION=1.0.32
 ARG CURSOR_SDK_BRIDGE_SHA256_AMD64=85d023c735de33b5cd6487586efc460ae51716978342cb6243f66e3cc7b0177f
 ARG CURSOR_SDK_BRIDGE_SHA256_ARM64=b1cd9e0d7add2d7fced8eb5dd8dd0e9fdd3e7e98587bc3c27ab983d7b8fbb456
@@ -58,6 +61,25 @@ RUN set -eux; \
   test -x /tmp/cursor-sdk-bridge/bin/cursor-sdk-bridge; \
   install -m 0755 /tmp/cursor-sdk-bridge/bin/cursor-sdk-bridge /usr/local/bin/cursor-sdk-bridge; \
   rm -rf "/tmp/${ASSET}" /tmp/cursor-sdk-bridge
+
+# Cursor CLI (pinned official release; keep it outside HOME so a persisted
+# /home/butterbox volume cannot hide the bundled installation).
+RUN set -eux; \
+  case "$(dpkg --print-architecture)" in \
+    amd64) CLI_ARCH=x64; CLI_SHA256="${CURSOR_CLI_SHA256_AMD64}" ;; \
+    arm64) CLI_ARCH=arm64; CLI_SHA256="${CURSOR_CLI_SHA256_ARM64}" ;; \
+    *) echo "unsupported architecture for Cursor CLI: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+  esac; \
+  URL="https://downloads.cursor.com/lab/${CURSOR_CLI_VERSION}/linux/${CLI_ARCH}/agent-cli-package.tar.gz"; \
+  curl -fsSL "${URL}" -o /tmp/cursor-cli.tar.gz; \
+  echo "${CLI_SHA256}  /tmp/cursor-cli.tar.gz" | sha256sum -c -; \
+  mkdir -p /opt/cursor-agent; \
+  tar -xzf /tmp/cursor-cli.tar.gz --strip-components=1 --no-same-owner -C /opt/cursor-agent; \
+  test -x /opt/cursor-agent/cursor-agent; \
+  ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/agent; \
+  ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/cursor-agent; \
+  test "$(NODE_COMPILE_CACHE=/tmp/cursor-cli-cache /usr/local/bin/agent --version)" = "${CURSOR_CLI_VERSION}"; \
+  rm -rf /tmp/cursor-cli.tar.gz /tmp/cursor-cli-cache
 
 # Python
 RUN apt-get update \
