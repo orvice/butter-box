@@ -113,7 +113,7 @@ func newRestartableHostSmokeClient(t *testing.T) (piv1connect.PiServiceClient, f
 	var server *httptest.Server
 	start := func() piv1connect.PiServiceClient {
 		manager = NewManager(testLogger(t), Config{Bin: bin, SessionDir: sessionDir, SandboxRoot: cwd})
-		path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
+		path, handler := NewServiceHandler(manager)
 		mux := http.NewServeMux()
 		mux.Handle(path, handler)
 		server = httptest.NewServer(mux)
@@ -304,5 +304,34 @@ func TestRealPiHostRelaySuccess(t *testing.T) {
 	turn, err = client.GetTurn(ctx, connect.NewRequest(&piv1.GetTurnRequest{SessionId: id, TurnCursor: submitted.Msg.GetTurnCursor(), WaitSeconds: 10}))
 	if err != nil || turn.Msg.GetRunning() || !strings.Contains(turn.Msg.GetResult().GetText(), `"surface_id":"s1"`) {
 		t.Fatalf("host result did not reach Pi: %v %v", turn, err)
+	}
+	entries, err := client.ListEntries(ctx, connect.NewRequest(&piv1.ListEntriesRequest{SessionId: id, AfterCursor: submitted.Msg.GetTurnCursor()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted := 0
+	for _, entry := range entries.Msg.GetEntries() {
+		var data struct {
+			Message struct {
+				Role       string `json:"role"`
+				ToolCallID string `json:"toolCallId"`
+				IsError    bool   `json:"isError"`
+				Details    struct {
+					SurfaceID string `json:"surface_id"`
+				} `json:"details"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(entry.GetPayloadJson()), &data); err != nil {
+			t.Fatal(err)
+		}
+		if data.Message.Role == "toolResult" && data.Message.ToolCallID == call.GetCallId() {
+			if data.Message.IsError || data.Message.Details.SurfaceID != "s1" {
+				t.Fatalf("host result details not preserved: %v", entry)
+			}
+			persisted++
+		}
+	}
+	if persisted != 1 {
+		t.Fatalf("persisted tool results = %d, want exactly one", persisted)
 	}
 }

@@ -4,17 +4,36 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	piv1 "github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1"
+	"github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1/piv1connect"
 )
 
 // Service implements piv1connect.PiServiceHandler on top of a Manager.
 type Service struct {
 	manager *Manager
+}
+
+// NewServiceHandler applies ingress limits before protobuf/JSON decoding or
+// decompression can allocate an unbounded host receipt. Existing Pi methods
+// retain their previous limits, including prompt/image submission.
+func NewServiceHandler(manager *Manager) (string, http.Handler) {
+	return piv1connect.NewPiServiceHandler(NewService(manager), connect.WithConditionalHandlerOptions(func(spec connect.Spec) []connect.HandlerOption {
+		switch spec.Procedure {
+		case piv1connect.PiServiceRespondHostCallProcedure:
+			// JSON can escape every payload byte as six bytes; leave envelope room.
+			return []connect.HandlerOption{connect.WithReadMaxBytes(6*hostMaxPayload + 16*1024)}
+		case piv1connect.PiServiceListHostCallsProcedure:
+			return []connect.HandlerOption{connect.WithReadMaxBytes(16 * 1024)}
+		default:
+			return nil
+		}
+	}))
 }
 
 func NewService(manager *Manager) *Service {

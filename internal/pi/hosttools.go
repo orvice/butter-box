@@ -74,14 +74,15 @@ type hostReceipt struct {
 }
 
 type hostGrant struct {
-	id      string
-	active  bool
-	begun   bool
-	expires time.Time
-	ended   time.Time
-	changed chan struct{}
-	calls   map[string]*hostReceipt
-	timer   *time.Timer
+	id       string
+	active   bool
+	finished bool
+	begun    bool
+	expires  time.Time
+	ended    time.Time
+	changed  chan struct{}
+	calls    map[string]*hostReceipt
+	timer    *time.Timer
 }
 
 func (g *hostGrant) notify() { close(g.changed); g.changed = make(chan struct{}) }
@@ -298,7 +299,7 @@ func (r *hostRelay) authorize(h *HostTools) (string, error) {
 
 func (r *hostRelay) expire(g *hostGrant) {
 	r.mu.Lock()
-	if !g.active {
+	if r.closed || g.finished {
 		r.mu.Unlock()
 		return
 	}
@@ -318,9 +319,6 @@ func (r *hostRelay) revokeLocked(g *hostGrant) {
 	}
 	g.active = false
 	g.ended = time.Now()
-	if g.timer != nil {
-		g.timer.Stop()
-	}
 	for _, call := range g.calls {
 		if !call.answered && !call.cancelled {
 			call.cancelled = true
@@ -339,6 +337,27 @@ func (r *hostRelay) revoke() {
 	defer r.mu.Unlock()
 	if r.current != nil {
 		r.revokeLocked(r.current)
+	}
+}
+
+// finish ends the process deadline only after the manager has confirmed both
+// the run and outstanding native commands are done. Revocation alone cannot
+// establish that: an abort or prompt acknowledgement may still be unresolved.
+func (r *hostRelay) finish() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.finishLocked()
+}
+
+func (r *hostRelay) finishLocked() {
+	if g := r.current; g != nil {
+		g.finished = true
+		if g.timer != nil {
+			g.timer.Stop()
+		}
 	}
 }
 
@@ -459,6 +478,7 @@ func (r *hostRelay) closeLocked() {
 	if r.current != nil {
 		r.revokeLocked(r.current)
 	}
+	r.finishLocked()
 	r.closed = true
 	close(r.closedCh)
 	_ = r.listener.Close()

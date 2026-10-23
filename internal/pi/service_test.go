@@ -301,7 +301,7 @@ func newTestClient(t *testing.T, cfg Config) (piv1connect.PiServiceClient, conte
 	t.Helper()
 	manager := newFakeManagerCfg(t, cfg)
 
-	path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
+	path, handler := NewServiceHandler(manager)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	srv := httptest.NewServer(mux)

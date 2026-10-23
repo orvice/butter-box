@@ -13,7 +13,6 @@ import (
 	"github.com/orvice/butter-box/internal/linear"
 	"github.com/orvice/butter-box/internal/pi"
 	cursorv1connect "github.com/orvice/butter-box/pkg/proto/butterbox/cursor/v1/cursorv1connect"
-	"github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1/piv1connect"
 )
 
 func Run(ctx context.Context, logger *slog.Logger) error {
@@ -66,7 +65,7 @@ func Run(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	if cfg.PiAPI.Enabled {
-		path, handler := piv1connect.NewPiServiceHandler(pi.NewService(manager))
+		path, handler := pi.NewServiceHandler(manager)
 		mux.Handle(path, WithBearerAuth(handler, cfg.Token))
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -335,7 +336,7 @@ func TestHostReceiptCanBeRetriedAfterHTTPResponseIsLost(t *testing.T) {
 	t.Setenv("FAKE_PI_HOST", "1")
 	manager := NewManager(testLogger(t), Config{Bin: os.Args[0], SessionDir: t.TempDir()})
 	t.Cleanup(manager.Stop)
-	path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
+	path, handler := NewServiceHandler(manager)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	server := httptest.NewServer(mux)
@@ -403,10 +404,74 @@ func TestHostLongPollDisconnectDoesNotConsumeAndNewCallWakesBeforeSettlement(t *
 	}
 }
 
+func TestHostDeadlineSurvivesUnconfirmedAbort(t *testing.T) {
+	for _, preflight := range []bool{false, true} {
+		t.Run(fmt.Sprint("preflight=", preflight), func(t *testing.T) {
+			t.Setenv("FAKE_PI_HOST", "1")
+			_, abortWaiting := fakeGateSetup(t, "FAKE_PI_ABORT_GATE")
+			var promptWaiting func(string)
+			if preflight {
+				var release func(string)
+				release, promptWaiting = fakeGateSetup(t, "FAKE_PI_PROMPT_GATE")
+				defer release("release")
+			}
+			client, ctx := newTestClient(t, Config{MaxSessions: 1})
+			id := createHostSession(t, client)
+			config := hostConfig()
+			config.MaxRunSeconds = 1
+			if preflight {
+				done := make(chan error, 1)
+				go func() {
+					_, err := client.SubmitMessage(ctx, connect.NewRequest(&piv1.SubmitMessageRequest{SessionId: id, Message: "host request", HostTools: config}))
+					done <- err
+				}()
+				promptWaiting("captured")
+			} else {
+				_, _ = pendingHostCall(t, client, id, "host request", config)
+			}
+			abortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+			defer cancel()
+			_, err := client.AbortSession(abortCtx, connect.NewRequest(&piv1.AbortSessionRequest{SessionId: id}))
+			if err == nil {
+				t.Fatal("fixture confirmed abort unexpectedly")
+			}
+			abortWaiting("captured")
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				_, err := client.GetSession(ctx, connect.NewRequest(&piv1.GetSessionRequest{SessionId: "known-after-unconfirmed-abort"}))
+				if err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("unconfirmed abort disabled host deadline: %v", err)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+}
+
+func TestHostReceiptIngressIsBoundedBeforeDecoding(t *testing.T) {
+	manager := NewManager(testLogger(t), Config{Bin: "/missing-pi"})
+	t.Cleanup(manager.Stop)
+	path, handler := NewServiceHandler(manager)
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	for _, options := range [][]connect.ClientOption{nil, {connect.WithProtoJSON()}, {connect.WithSendGzip()}, {connect.WithProtoJSON(), connect.WithSendGzip()}} {
+		client := piv1connect.NewPiServiceClient(server.Client(), server.URL, options...)
+		_, err := client.RespondHostCall(t.Context(), connect.NewRequest(&piv1.RespondHostCallRequest{SessionId: "missing", TurnId: "missing", CallId: "missing", Outcome: &piv1.RespondHostCallRequest_ResultJson{ResultJson: `{"large":"` + strings.Repeat("x", 2*1024*1024) + `"}`}}))
+		if connect.CodeOf(err) != connect.CodeResourceExhausted {
+			t.Fatalf("oversized encoded/decompressed receipt reached handler: %v", err)
+		}
+	}
+}
+
 func TestHostToolsDiscoveryDoesNotClaimExtensionReadiness(t *testing.T) {
 	manager := NewManager(testLogger(t), Config{Bin: "/missing-pi"})
 	t.Cleanup(manager.Stop)
-	path, handler := piv1connect.NewPiServiceHandler(NewService(manager))
+	path, handler := NewServiceHandler(manager)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	server := httptest.NewServer(mux)

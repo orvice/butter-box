@@ -1109,6 +1109,7 @@ func (m *Manager) dispatchAbort(ctx context.Context, s *session) error {
 func (m *Manager) releaseAbort(s *session) {
 	m.mu.Lock()
 	s.abortPending--
+	m.finishHostIfIdleLocked(s)
 	s.lastUsed = time.Now()
 	m.mu.Unlock()
 }
@@ -1355,6 +1356,7 @@ func (m *Manager) quarantineModel(s *session, completion <-chan commandOutcome) 
 		<-completion
 		m.mu.Lock()
 		s.modelPending = false
+		m.finishHostIfIdleLocked(s)
 		s.lastUsed = time.Now()
 		m.mu.Unlock()
 	}()
@@ -1397,7 +1399,16 @@ func (m *Manager) releaseRun(s *session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	<-s.runSlot
+	m.finishHostIfIdleLocked(s)
 	s.lastUsed = time.Now()
+}
+
+// Caller holds mu, so another reservation cannot begin while the old grant's
+// deadline is being retired. This does no transport I/O (already revoked).
+func (m *Manager) finishHostIfIdleLocked(s *session) {
+	if len(s.runSlot) == 0 && !s.modelPending && s.abortPending == 0 {
+		s.proc.host.finish()
+	}
 }
 
 func (m *Manager) touch(s *session) {

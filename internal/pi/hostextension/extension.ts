@@ -18,6 +18,8 @@ interface Wire {
   error?: string;
 }
 interface Grant { turnID: string; deadline: number }
+const beginKey = (id: string) => `begin:${id}`;
+const callKey = (turnID: string, callID: string) => `call:${turnID}:${callID}`;
 
 export default function (pi: ExtensionAPI) {
   const socketPath = process.env.BUTTERBOX_PI_HOST_SOCKET;
@@ -50,7 +52,7 @@ export default function (pi: ExtensionAPI) {
     if (Buffer.byteLength(frame) > MAX_FRAME) throw new Error("Host relay frame too large");
     socket.write(frame + "\n");
   };
-  const request = (key: string, message: object, deadline: number, signal?: AbortSignal): Promise<Wire> => {
+  const request = (key: string, message: object, deadline: number, signal?: AbortSignal, onAbort?: () => void): Promise<Wire> => {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(new Error("Host tool aborted")); return; }
       if (pending.has(key)) { reject(new Error("Duplicate host call ID")); return; }
@@ -61,9 +63,7 @@ export default function (pi: ExtensionAPI) {
         if (error) reject(error); else resolve(reply!);
       };
       const abort = () => {
-        if (grant && key.startsWith("call:")) {
-          try { send({ type: "cancel_call", turn_id: grant.turnID, call_id: key.slice(key.indexOf(":", 5) + 1) }); } catch { /* disconnected */ }
-        }
+        try { onAbort?.(); } catch { /* disconnected */ }
         finish(new Error("Host tool aborted or expired"));
       };
       const timer = setTimeout(abort, Math.max(0, deadline - Date.now()));
@@ -87,9 +87,9 @@ export default function (pi: ExtensionAPI) {
     async execute(callID, args, signal) {
       const current = authorized(); // Required even for historical/nested calls.
       if (Buffer.byteLength(JSON.stringify(args)) > MAX_PAYLOAD) throw new Error("Host tool arguments exceed 256 KiB");
-      const reply = await request(`call:${current.turnID}:${callID}`, {
+      const reply = await request(callKey(current.turnID, callID), {
         type: "call", turn_id: current.turnID, call_id: callID, tool: contract.name, arguments: args,
-      }, current.deadline, signal);
+      }, current.deadline, signal, () => send({ type: "cancel_call", turn_id: current.turnID, call_id: callID }));
       if (reply.error) throw new Error(reply.error); // Ordinary Pi tool error, not transport success.
       return { content: [{ type: "text", text: JSON.stringify(reply.result) }], details: reply.result };
     },
@@ -118,7 +118,7 @@ export default function (pi: ExtensionAPI) {
           const line = buffer.subarray(0, end); buffer = buffer.subarray(end + 1);
           try {
             const message = JSON.parse(line.toString("utf8")) as Wire;
-            const key = message.type === "config" ? `begin:${message.id}` : `call:${message.turn_id}:${message.call_id}`;
+            const key = message.type === "config" ? beginKey(message.id ?? "") : callKey(message.turn_id ?? "", message.call_id ?? "");
             pending.get(key)?.resolve(message);
           } catch { connection.destroy(); return; }
         }
@@ -134,7 +134,7 @@ export default function (pi: ExtensionAPI) {
     reset("New run requires fresh authorization");
     if (!socket || socket.destroyed) return;
     const id = randomUUID();
-    const config = await request(`begin:${id}`, { type: "begin", id }, Date.now() + 5000);
+    const config = await request(beginKey(id), { type: "begin", id }, Date.now() + 5000);
     if (!config.turn_id || !config.tools?.includes(contract.name) || !config.deadline_ms || config.deadline_ms <= Date.now()) return;
     grant = { turnID: config.turn_id, deadline: config.deadline_ms };
     expiry = setTimeout(() => reset("Host authorization expired"), config.deadline_ms - Date.now());
