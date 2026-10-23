@@ -189,7 +189,7 @@ func TestHostRelayBoundsPayloadsCallsAndReceiptRetention(t *testing.T) {
 	client, ctx := newTestClient(t, Config{})
 	id := createHostSession(t, client)
 	submitted, call := pendingHostCall(t, client, id, "host calls 65", hostConfig())
-	for _, outcome := range []piv1.RespondHostCallRequest{
+	for _, outcome := range []*piv1.RespondHostCallRequest{
 		{Outcome: &piv1.RespondHostCallRequest_ResultJson{ResultJson: `[]`}},
 		{Outcome: &piv1.RespondHostCallRequest_ResultJson{ResultJson: `{"invalid":`}},
 		{Outcome: &piv1.RespondHostCallRequest_ResultJson{ResultJson: `{"large":"` + strings.Repeat("x", 256*1024) + `"}`}},
@@ -197,7 +197,7 @@ func TestHostRelayBoundsPayloadsCallsAndReceiptRetention(t *testing.T) {
 		{},
 	} {
 		outcome.SessionId, outcome.TurnId, outcome.CallId = id, submitted.GetTurnId(), call.GetCallId()
-		if _, err := client.RespondHostCall(ctx, connect.NewRequest(&outcome)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if _, err := client.RespondHostCall(ctx, connect.NewRequest(outcome)); connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("invalid receipt: %v", err)
 		}
 	}
