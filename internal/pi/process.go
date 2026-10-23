@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -37,14 +38,25 @@ type process struct {
 
 	done    chan struct{}
 	exitErr error
+	host    *hostRelay
 }
 
 // startProcess spawns the pi child. dir, when non-empty, becomes the child's
 // working directory.
 func startProcess(logger *slog.Logger, bin string, args []string, dir string) (*process, error) {
+	return startProcessEnv(logger, bin, args, dir, nil)
+}
+
+func startProcessEnv(logger *slog.Logger, bin string, args []string, dir string, env []string) (*process, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	// Never inherit another Pi process's private host-relay configuration.
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "BUTTERBOX_PI_HOST_") {
+			cmd.Env = append(cmd.Env, value)
+		}
+	}
+	cmd.Env = append(cmd.Env, env...)
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()

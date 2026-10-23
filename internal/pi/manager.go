@@ -249,7 +249,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (Info, error) {
 		}
 	}()
 
-	proc, err := startProcess(m.logger, m.cfg.Bin, args, spawnDir)
+	proc, err := m.startSessionProcess(args, spawnDir)
 	if err != nil {
 		return Info{}, err
 	}
@@ -480,6 +480,7 @@ func (m *Manager) Submit(ctx context.Context, id, message string, images []Image
 
 // SubmitResult reports the cursor and the selected model observed in Pi.
 type SubmitResult struct {
+	TurnID       string
 	Cursor       string
 	AppliedModel *ModelSelection
 }
@@ -487,6 +488,16 @@ type SubmitResult struct {
 // SubmitWithModel optionally selects an exact model before submitting the
 // prompt. Setup and the entire detached run share Send's run slot.
 func (m *Manager) SubmitWithModel(ctx context.Context, id, message string, images []ImageInput, selection *ModelSelection) (SubmitResult, error) {
+	return m.SubmitWithHostTools(ctx, id, message, images, selection, nil)
+}
+
+// SubmitWithHostTools binds model setup and host authorization to one slot.
+func (m *Manager) SubmitWithHostTools(ctx context.Context, id, message string, images []ImageInput, selection *ModelSelection, host *HostTools) (SubmitResult, error) {
+	if host != nil {
+		if err := host.validate(); err != nil {
+			return SubmitResult{}, err
+		}
+	}
 	s, err := m.attach(ctx, id)
 	if err != nil {
 		return SubmitResult{}, err
@@ -502,6 +513,21 @@ func (m *Manager) SubmitWithModel(ctx context.Context, id, message string, image
 	setupCtx, cancel := context.WithTimeout(context.Background(), defaultSetupTimeout)
 	defer cancel()
 
+	turnID := ""
+	if host != nil {
+		readyCtx, readyCancel := context.WithTimeout(setupCtx, 2*time.Second)
+		ready := s.proc.host != nil && s.proc.host.isReady(readyCtx, id)
+		readyCancel()
+		if !ready {
+			m.releaseRun(s)
+			return SubmitResult{}, ErrHostUnsupported
+		}
+		turnID, err = s.proc.host.authorize(host)
+		if err != nil {
+			m.releaseRun(s)
+			return SubmitResult{}, err
+		}
+	}
 	applied, err := modelForSubmit(setupCtx, s.proc, selection)
 	if err != nil {
 		if pending, ok := errors.AsType[*pendingCommandError](err); ok {
@@ -553,7 +579,7 @@ func (m *Manager) SubmitWithModel(ctx context.Context, id, message string, image
 		slog.String("session_id", s.id),
 		slog.String("turn_cursor", cursor),
 	)
-	return SubmitResult{Cursor: cursor, AppliedModel: applied}, nil
+	return SubmitResult{Cursor: cursor, AppliedModel: applied, TurnID: turnID}, nil
 }
 
 // startDetached transfers the slot and subscription to background supervision,
@@ -703,6 +729,11 @@ func (m *Manager) turnResult(ctx context.Context, proc *process, cursor string) 
 		return nil, nil
 	}
 
+	// A transcript ending in a tool request is not a completed final answer
+	// after a process restart/expiry interrupted the waiting tool.
+	if last.StopReason == "toolUse" {
+		return nil, nil
+	}
 	stats, err := getStats(ctx, proc)
 	if err != nil {
 		return nil, err
@@ -1050,6 +1081,7 @@ func (m *Manager) Abort(ctx context.Context, id string) error {
 	if !ok {
 		return nil
 	}
+	s.proc.host.revoke()
 	return m.dispatchAbort(ctx, s)
 }
 
@@ -1203,7 +1235,7 @@ func (m *Manager) reattach(ctx context.Context, id string) (*session, error) {
 
 	args := m.appendSessionDir([]string{"--mode", "rpc", "--session", id})
 	// attach reserved capacity in m.inflight before calling reattach.
-	proc, err := startProcess(m.logger, m.cfg.Bin, args, cwd)
+	proc, err := m.startSessionProcess(args, cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -1338,6 +1370,9 @@ func (m *Manager) abortRequested(s *session) bool {
 func (m *Manager) acquireRun(s *session) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if s.proc.host.stopping() {
+		return errProcessExited
+	}
 	if s.modelPending {
 		return fmt.Errorf("%w: previous set_model has not completed", ErrSetModel)
 	}
@@ -1356,6 +1391,9 @@ func (m *Manager) acquireRun(s *session) error {
 
 // releaseRun makes the slot available at the same linearization boundary.
 func (m *Manager) releaseRun(s *session) {
+	// Keep the slot reserved while revoking, but never hold the manager's
+	// global lock across local transport I/O.
+	s.proc.host.revoke()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	<-s.runSlot
