@@ -4,3 +4,4 @@ dist/
 build/
 tmp/
 *.log
+node_modules/

@@ -52,6 +52,11 @@ const (
 	PiServiceSubmitMessageProcedure = "/butterbox.pi.v1.PiService/SubmitMessage"
 	// PiServiceGetTurnProcedure is the fully-qualified name of the PiService's GetTurn RPC.
 	PiServiceGetTurnProcedure = "/butterbox.pi.v1.PiService/GetTurn"
+	// PiServiceListHostCallsProcedure is the fully-qualified name of the PiService's ListHostCalls RPC.
+	PiServiceListHostCallsProcedure = "/butterbox.pi.v1.PiService/ListHostCalls"
+	// PiServiceRespondHostCallProcedure is the fully-qualified name of the PiService's RespondHostCall
+	// RPC.
+	PiServiceRespondHostCallProcedure = "/butterbox.pi.v1.PiService/RespondHostCall"
 	// PiServiceGetAvailableModelsProcedure is the fully-qualified name of the PiService's
 	// GetAvailableModels RPC.
 	PiServiceGetAvailableModelsProcedure = "/butterbox.pi.v1.PiService/GetAvailableModels"
@@ -66,7 +71,8 @@ const (
 
 // PiServiceClient is a client for the butterbox.pi.v1.PiService service.
 type PiServiceClient interface {
-	// GetCapabilities reports Box API features without starting a Pi process.
+	// GetCapabilities reports Box API features without starting a Pi process
+	// unless session_id is set to check that process's extension readiness.
 	// Before sending model_selection, clients MUST require
 	// submit_message_model_selection=true. Unimplemented, absent, or false
 	// means unsupported: older Boxes may silently ignore new protobuf fields.
@@ -95,7 +101,8 @@ type PiServiceClient interface {
 	// SubmitMessage accepts one prompt and returns immediately with a turn
 	// cursor. The run is detached from the request lifetime: a dropped
 	// connection never aborts it. Poll or long-poll the run with GetTurn;
-	// AbortSession is the only way to cancel it. A prompt acknowledgement
+	// AbortSession explicitly cancels it; host-enabled runs also have an
+	// authorization deadline. A prompt acknowledgement
 	// timeout may still lead to an accepted turn; do not automatically retry.
 	// Its run slot remains reserved through rejection or full settlement.
 	SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error)
@@ -103,6 +110,12 @@ type PiServiceClient interface {
 	// flight, optionally waiting for it to settle, and returns its result once
 	// the session entries past the cursor contain an assistant message.
 	GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error)
+	// Non-consuming host-call polling, independent of final-text GetTurn.
+	// New calls wake long polls before agent_settled. See docs/pi-host-tools.md.
+	ListHostCalls(context.Context, *connect.Request[v1.ListHostCallsRequest]) (*connect.Response[v1.ListHostCallsResponse], error)
+	// Deliver a successful JSON object or ordinary tool error to the same Pi
+	// invocation. Identical receipts are idempotent within bounded retention.
+	RespondHostCall(context.Context, *connect.Request[v1.RespondHostCallRequest]) (*connect.Response[v1.RespondHostCallResponse], error)
 	// GetAvailableModels reports the models pi can use on this box (as
 	// configured by pi's providers/auth). With session_id set it asks that
 	// session's process, re-attaching it if it is not currently active; with
@@ -184,6 +197,18 @@ func NewPiServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...c
 			connect.WithSchema(piServiceMethods.ByName("GetTurn")),
 			connect.WithClientOptions(opts...),
 		),
+		listHostCalls: connect.NewClient[v1.ListHostCallsRequest, v1.ListHostCallsResponse](
+			httpClient,
+			baseURL+PiServiceListHostCallsProcedure,
+			connect.WithSchema(piServiceMethods.ByName("ListHostCalls")),
+			connect.WithClientOptions(opts...),
+		),
+		respondHostCall: connect.NewClient[v1.RespondHostCallRequest, v1.RespondHostCallResponse](
+			httpClient,
+			baseURL+PiServiceRespondHostCallProcedure,
+			connect.WithSchema(piServiceMethods.ByName("RespondHostCall")),
+			connect.WithClientOptions(opts...),
+		),
 		getAvailableModels: connect.NewClient[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse](
 			httpClient,
 			baseURL+PiServiceGetAvailableModelsProcedure,
@@ -222,6 +247,8 @@ type piServiceClient struct {
 	streamMessage      *connect.Client[v1.StreamMessageRequest, v1.StreamMessageResponse]
 	submitMessage      *connect.Client[v1.SubmitMessageRequest, v1.SubmitMessageResponse]
 	getTurn            *connect.Client[v1.GetTurnRequest, v1.GetTurnResponse]
+	listHostCalls      *connect.Client[v1.ListHostCallsRequest, v1.ListHostCallsResponse]
+	respondHostCall    *connect.Client[v1.RespondHostCallRequest, v1.RespondHostCallResponse]
 	getAvailableModels *connect.Client[v1.GetAvailableModelsRequest, v1.GetAvailableModelsResponse]
 	listDirectories    *connect.Client[v1.ListDirectoriesRequest, v1.ListDirectoriesResponse]
 	abortSession       *connect.Client[v1.AbortSessionRequest, v1.AbortSessionResponse]
@@ -273,6 +300,16 @@ func (c *piServiceClient) GetTurn(ctx context.Context, req *connect.Request[v1.G
 	return c.getTurn.CallUnary(ctx, req)
 }
 
+// ListHostCalls calls butterbox.pi.v1.PiService.ListHostCalls.
+func (c *piServiceClient) ListHostCalls(ctx context.Context, req *connect.Request[v1.ListHostCallsRequest]) (*connect.Response[v1.ListHostCallsResponse], error) {
+	return c.listHostCalls.CallUnary(ctx, req)
+}
+
+// RespondHostCall calls butterbox.pi.v1.PiService.RespondHostCall.
+func (c *piServiceClient) RespondHostCall(ctx context.Context, req *connect.Request[v1.RespondHostCallRequest]) (*connect.Response[v1.RespondHostCallResponse], error) {
+	return c.respondHostCall.CallUnary(ctx, req)
+}
+
 // GetAvailableModels calls butterbox.pi.v1.PiService.GetAvailableModels.
 func (c *piServiceClient) GetAvailableModels(ctx context.Context, req *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error) {
 	return c.getAvailableModels.CallUnary(ctx, req)
@@ -295,7 +332,8 @@ func (c *piServiceClient) DeleteSession(ctx context.Context, req *connect.Reques
 
 // PiServiceHandler is an implementation of the butterbox.pi.v1.PiService service.
 type PiServiceHandler interface {
-	// GetCapabilities reports Box API features without starting a Pi process.
+	// GetCapabilities reports Box API features without starting a Pi process
+	// unless session_id is set to check that process's extension readiness.
 	// Before sending model_selection, clients MUST require
 	// submit_message_model_selection=true. Unimplemented, absent, or false
 	// means unsupported: older Boxes may silently ignore new protobuf fields.
@@ -324,7 +362,8 @@ type PiServiceHandler interface {
 	// SubmitMessage accepts one prompt and returns immediately with a turn
 	// cursor. The run is detached from the request lifetime: a dropped
 	// connection never aborts it. Poll or long-poll the run with GetTurn;
-	// AbortSession is the only way to cancel it. A prompt acknowledgement
+	// AbortSession explicitly cancels it; host-enabled runs also have an
+	// authorization deadline. A prompt acknowledgement
 	// timeout may still lead to an accepted turn; do not automatically retry.
 	// Its run slot remains reserved through rejection or full settlement.
 	SubmitMessage(context.Context, *connect.Request[v1.SubmitMessageRequest]) (*connect.Response[v1.SubmitMessageResponse], error)
@@ -332,6 +371,12 @@ type PiServiceHandler interface {
 	// flight, optionally waiting for it to settle, and returns its result once
 	// the session entries past the cursor contain an assistant message.
 	GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error)
+	// Non-consuming host-call polling, independent of final-text GetTurn.
+	// New calls wake long polls before agent_settled. See docs/pi-host-tools.md.
+	ListHostCalls(context.Context, *connect.Request[v1.ListHostCallsRequest]) (*connect.Response[v1.ListHostCallsResponse], error)
+	// Deliver a successful JSON object or ordinary tool error to the same Pi
+	// invocation. Identical receipts are idempotent within bounded retention.
+	RespondHostCall(context.Context, *connect.Request[v1.RespondHostCallRequest]) (*connect.Response[v1.RespondHostCallResponse], error)
 	// GetAvailableModels reports the models pi can use on this box (as
 	// configured by pi's providers/auth). With session_id set it asks that
 	// session's process, re-attaching it if it is not currently active; with
@@ -409,6 +454,18 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 		connect.WithSchema(piServiceMethods.ByName("GetTurn")),
 		connect.WithHandlerOptions(opts...),
 	)
+	piServiceListHostCallsHandler := connect.NewUnaryHandler(
+		PiServiceListHostCallsProcedure,
+		svc.ListHostCalls,
+		connect.WithSchema(piServiceMethods.ByName("ListHostCalls")),
+		connect.WithHandlerOptions(opts...),
+	)
+	piServiceRespondHostCallHandler := connect.NewUnaryHandler(
+		PiServiceRespondHostCallProcedure,
+		svc.RespondHostCall,
+		connect.WithSchema(piServiceMethods.ByName("RespondHostCall")),
+		connect.WithHandlerOptions(opts...),
+	)
 	piServiceGetAvailableModelsHandler := connect.NewUnaryHandler(
 		PiServiceGetAvailableModelsProcedure,
 		svc.GetAvailableModels,
@@ -453,6 +510,10 @@ func NewPiServiceHandler(svc PiServiceHandler, opts ...connect.HandlerOption) (s
 			piServiceSubmitMessageHandler.ServeHTTP(w, r)
 		case PiServiceGetTurnProcedure:
 			piServiceGetTurnHandler.ServeHTTP(w, r)
+		case PiServiceListHostCallsProcedure:
+			piServiceListHostCallsHandler.ServeHTTP(w, r)
+		case PiServiceRespondHostCallProcedure:
+			piServiceRespondHostCallHandler.ServeHTTP(w, r)
 		case PiServiceGetAvailableModelsProcedure:
 			piServiceGetAvailableModelsHandler.ServeHTTP(w, r)
 		case PiServiceListDirectoriesProcedure:
@@ -504,6 +565,14 @@ func (UnimplementedPiServiceHandler) SubmitMessage(context.Context, *connect.Req
 
 func (UnimplementedPiServiceHandler) GetTurn(context.Context, *connect.Request[v1.GetTurnRequest]) (*connect.Response[v1.GetTurnResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.GetTurn is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) ListHostCalls(context.Context, *connect.Request[v1.ListHostCallsRequest]) (*connect.Response[v1.ListHostCallsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.ListHostCalls is not implemented"))
+}
+
+func (UnimplementedPiServiceHandler) RespondHostCall(context.Context, *connect.Request[v1.RespondHostCallRequest]) (*connect.Response[v1.RespondHostCallResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("butterbox.pi.v1.PiService.RespondHostCall is not implemented"))
 }
 
 func (UnimplementedPiServiceHandler) GetAvailableModels(context.Context, *connect.Request[v1.GetAvailableModelsRequest]) (*connect.Response[v1.GetAvailableModelsResponse], error) {

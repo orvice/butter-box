@@ -1,0 +1,15 @@
+{
+  "name": "render_ui",
+  "label": "Render UI",
+  "description": "Create, update or delete a read-only A2UI v0.9.1 result card through the host. To create, omit surface_id; the host assigns and returns it. Send messages in order: updateComponents, updateDataModel or deleteSurface. Include a plain-text fallback when creating a card. Success is reported only after host validation and persistence. Invalid parameters return a tool error; correct them or answer in text. Follow the host's card policy and catalog; this tool does not support interactive forms or actions.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "surface_id": {"type": "string", "description": "Handle returned by the host for a card in this conversation. Omit to create."},
+      "messages": {"type": "array", "items": {"type": "object", "additionalProperties": true}, "description": "A2UI v0.9.1 messages applied in order."},
+      "fallback": {"type": "string", "description": "Plain-text version of the card. Required by the host when creating."}
+    },
+    "required": ["messages"],
+    "additionalProperties": false
+  }
+}

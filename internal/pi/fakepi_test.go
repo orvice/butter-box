@@ -47,6 +47,7 @@ type fakePi struct {
 	// Test-only gate: hold one entries response after taking its snapshot.
 	entriesHeld bool
 	promptHeld  bool
+	host        *fakeHostPeer
 }
 
 // appendEntry records one session entry, mimicking pi's entry log.
@@ -117,6 +118,7 @@ func fakePiMain() {
 		}
 	}
 
+	f.host = connectFakeHost(f.sessionID)
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 64<<10), maxLineBytes)
 	for sc.Scan() {
@@ -406,6 +408,10 @@ func (f *fakePi) run(prompt, provider, modelID string) {
 			"content": userContent,
 		},
 	})
+
+	if f.host != nil && f.host.run(f, prompt) {
+		return
+	}
 
 	if strings.Contains(prompt, "dialog") {
 		// Block on an extension UI confirm; the client must answer or the

@@ -11,7 +11,8 @@ option go_package = "github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1;piv1
 // (~/.pi/agent), so an inactive session can be re-attached transparently and
 // every session is visible in pi-web.
 service PiService {
-  // GetCapabilities reports Box API features without starting a Pi process.
+  // GetCapabilities reports Box API features without starting a Pi process
+  // unless session_id is set to check that process's extension readiness.
   // Before sending model_selection, clients MUST require
   // submit_message_model_selection=true. Unimplemented, absent, or false
   // means unsupported: older Boxes may silently ignore new protobuf fields.
@@ -47,7 +48,8 @@ service PiService {
   // SubmitMessage accepts one prompt and returns immediately with a turn
   // cursor. The run is detached from the request lifetime: a dropped
   // connection never aborts it. Poll or long-poll the run with GetTurn;
-  // AbortSession is the only way to cancel it. A prompt acknowledgement
+  // AbortSession explicitly cancels it; host-enabled runs also have an
+  // authorization deadline. A prompt acknowledgement
   // timeout may still lead to an accepted turn; do not automatically retry.
   // Its run slot remains reserved through rejection or full settlement.
   rpc SubmitMessage(SubmitMessageRequest) returns (SubmitMessageResponse);
@@ -56,6 +58,14 @@ service PiService {
   // flight, optionally waiting for it to settle, and returns its result once
   // the session entries past the cursor contain an assistant message.
   rpc GetTurn(GetTurnRequest) returns (GetTurnResponse);
+
+  // Non-consuming host-call polling, independent of final-text GetTurn.
+  // New calls wake long polls before agent_settled. See docs/pi-host-tools.md.
+  rpc ListHostCalls(ListHostCallsRequest) returns (ListHostCallsResponse);
+
+  // Deliver a successful JSON object or ordinary tool error to the same Pi
+  // invocation. Identical receipts are idempotent within bounded retention.
+  rpc RespondHostCall(RespondHostCallRequest) returns (RespondHostCallResponse);
 
   // GetAvailableModels reports the models pi can use on this box (as
   // configured by pi's providers/auth). With session_id set it asks that
@@ -76,11 +86,21 @@ service PiService {
   rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
 }
 
-message GetCapabilitiesRequest {}
+message GetCapabilitiesRequest {
+  // Optional: attach/check this process's compatible extension handshake.
+  string session_id = 1;
+}
 
 message GetCapabilitiesResponse {
   // Supports atomic model selection + prompt submission and applied_model.
   bool submit_message_model_selection = 1;
+  // Box support alone does not imply live extension readiness.
+  uint32 host_tools_protocol_version = 2;
+  string host_tools_contract_sha256 = 3;
+  bool host_tools_extension_ready = 4;
+  uint32 host_tools_max_payload_bytes = 5;
+  uint32 host_tools_max_calls_per_turn = 6;
+  uint32 host_tools_max_run_seconds = 7;
 }
 
 message CreateSessionRequest {
@@ -160,6 +180,8 @@ message SubmitMessageRequest {
   // both fields must be non-empty. Applied before prompt under the same run
   // slot as every ButterBox send entry point; no fuzzy matching.
   ModelSelection model_selection = 4;
+  // Opt-in for this turn only; require matching live capabilities first.
+  HostToolsConfig host_tools = 5;
 }
 
 message SubmitMessageResponse {
@@ -171,7 +193,55 @@ message SubmitMessageResponse {
   // Unset when Pi reports no model. For virtual models this is the selected
   // router, not necessarily the physical model producing the assistant reply.
   ModelSelection applied_model = 2;
+  // Random process-local relay identity, never an entries cursor. Present
+  // only for explicitly host-enabled submissions; invalid after restart.
+  string turn_id = 3;
 }
+
+// Versioned contract; Box owns relay mechanics, Butter owns card validation.
+message HostToolsConfig {
+  uint32 protocol_version = 1;
+  string contract_sha256 = 2;
+  repeated string allowed_tools = 3;
+  // 0 defaults to 1800; otherwise 1..86400. Covers setup and the whole run.
+  uint32 max_run_seconds = 4;
+}
+
+message ListHostCallsRequest {
+  string session_id = 1;
+  string turn_id = 2;
+  // 0 polls; positive values capped at 30 seconds. Reads never consume calls.
+  int32 wait_seconds = 3;
+}
+
+message HostCall {
+  string session_id = 1;
+  string turn_id = 2;
+  string call_id = 3;
+  string tool = 4;
+  // UTF-8 JSON object, at most host_tools_max_payload_bytes.
+  string arguments_json = 5;
+}
+
+message ListHostCallsResponse {
+  repeated HostCall calls = 1;
+  // Relay grant is still active. Not a promise of card/model success.
+  bool running = 2;
+}
+
+message RespondHostCallRequest {
+  string session_id = 1;
+  string turn_id = 2;
+  string call_id = 3;
+  oneof outcome {
+    // JSON object; Box treats its contents as opaque, not as A2UI state.
+    string result_json = 4;
+    // Ordinary failed tool result (not a transport failure).
+    string error = 5;
+  }
+}
+
+message RespondHostCallResponse {}
 
 message GetTurnRequest {
   string session_id = 1;

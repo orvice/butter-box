@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	piv1 "github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1"
+	"github.com/orvice/butter-box/pkg/proto/butterbox/pi/v1/piv1connect"
 )
 
 // Service implements piv1connect.PiServiceHandler on top of a Manager.
@@ -17,12 +19,45 @@ type Service struct {
 	manager *Manager
 }
 
+// NewServiceHandler applies ingress limits before protobuf/JSON decoding or
+// decompression can allocate an unbounded host receipt. Existing Pi methods
+// retain their previous limits, including prompt/image submission.
+func NewServiceHandler(manager *Manager) (string, http.Handler) {
+	return piv1connect.NewPiServiceHandler(NewService(manager), connect.WithConditionalHandlerOptions(func(spec connect.Spec) []connect.HandlerOption {
+		switch spec.Procedure {
+		case piv1connect.PiServiceRespondHostCallProcedure:
+			// JSON can escape every payload byte as six bytes; leave envelope room.
+			return []connect.HandlerOption{connect.WithReadMaxBytes(6*hostMaxPayload + 16*1024)}
+		case piv1connect.PiServiceListHostCallsProcedure:
+			return []connect.HandlerOption{connect.WithReadMaxBytes(16 * 1024)}
+		default:
+			return nil
+		}
+	}))
+}
+
 func NewService(manager *Manager) *Service {
 	return &Service{manager: manager}
 }
 
-func (s *Service) GetCapabilities(_ context.Context, _ *connect.Request[piv1.GetCapabilitiesRequest]) (*connect.Response[piv1.GetCapabilitiesResponse], error) {
-	return connect.NewResponse(&piv1.GetCapabilitiesResponse{SubmitMessageModelSelection: true}), nil
+func (s *Service) GetCapabilities(ctx context.Context, req *connect.Request[piv1.GetCapabilitiesRequest]) (*connect.Response[piv1.GetCapabilitiesResponse], error) {
+	ready := false
+	if id := req.Msg.GetSessionId(); id != "" {
+		var err error
+		ready, err = s.manager.HostToolsReady(ctx, id)
+		if err != nil {
+			return nil, rpcError(err)
+		}
+	}
+	return connect.NewResponse(&piv1.GetCapabilitiesResponse{
+		HostToolsExtensionReady:     ready,
+		SubmitMessageModelSelection: true,
+		HostToolsProtocolVersion:    hostProtocolVersion,
+		HostToolsContractSha256:     hostContractHash(),
+		HostToolsMaxPayloadBytes:    hostMaxPayload,
+		HostToolsMaxCallsPerTurn:    hostMaxCalls,
+		HostToolsMaxRunSeconds:      hostMaxRunSeconds,
+	}), nil
 }
 
 func (s *Service) CreateSession(ctx context.Context, req *connect.Request[piv1.CreateSessionRequest]) (*connect.Response[piv1.CreateSessionResponse], error) {
@@ -111,11 +146,15 @@ func (s *Service) SubmitMessage(ctx context.Context, req *connect.Request[piv1.S
 	if model := req.Msg.GetModelSelection(); model != nil {
 		selection = &ModelSelection{Provider: model.GetProvider(), ModelID: model.GetModelId()}
 	}
-	result, err := s.manager.SubmitWithModel(ctx, req.Msg.GetSessionId(), req.Msg.GetMessage(), imagesInput(req.Msg.GetImages()), selection)
+	var host *HostTools
+	if h := req.Msg.GetHostTools(); h != nil {
+		host = &HostTools{ProtocolVersion: h.GetProtocolVersion(), ContractSHA256: h.GetContractSha256(), AllowedTools: h.GetAllowedTools(), MaxRunSeconds: h.GetMaxRunSeconds()}
+	}
+	result, err := s.manager.SubmitWithHostTools(ctx, req.Msg.GetSessionId(), req.Msg.GetMessage(), imagesInput(req.Msg.GetImages()), selection, host)
 	if err != nil {
 		return nil, rpcError(err)
 	}
-	resp := &piv1.SubmitMessageResponse{TurnCursor: result.Cursor}
+	resp := &piv1.SubmitMessageResponse{TurnCursor: result.Cursor, TurnId: result.TurnID}
 	if model := result.AppliedModel; model != nil {
 		resp.AppliedModel = &piv1.ModelSelection{Provider: model.Provider, ModelId: model.ModelID}
 	}
@@ -137,6 +176,25 @@ func (s *Service) GetTurn(ctx context.Context, req *connect.Request[piv1.GetTurn
 		}
 	}
 	return connect.NewResponse(resp), nil
+}
+
+func (s *Service) ListHostCalls(ctx context.Context, req *connect.Request[piv1.ListHostCallsRequest]) (*connect.Response[piv1.ListHostCallsResponse], error) {
+	calls, running, err := s.manager.ListHostCalls(ctx, req.Msg.GetSessionId(), req.Msg.GetTurnId(), time.Duration(req.Msg.GetWaitSeconds())*time.Second)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	resp := &piv1.ListHostCallsResponse{Running: running}
+	for _, call := range calls {
+		resp.Calls = append(resp.Calls, &piv1.HostCall{SessionId: call.SessionID, TurnId: call.TurnID, CallId: call.CallID, Tool: call.Tool, ArgumentsJson: call.Arguments})
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (s *Service) RespondHostCall(ctx context.Context, req *connect.Request[piv1.RespondHostCallRequest]) (*connect.Response[piv1.RespondHostCallResponse], error) {
+	if err := s.manager.RespondHostCall(req.Msg.GetSessionId(), req.Msg.GetTurnId(), req.Msg.GetCallId(), req.Msg.GetResultJson(), req.Msg.GetError()); err != nil {
+		return nil, rpcError(err)
+	}
+	return connect.NewResponse(&piv1.RespondHostCallResponse{}), nil
 }
 
 func (s *Service) GetAvailableModels(ctx context.Context, req *connect.Request[piv1.GetAvailableModelsRequest]) (*connect.Response[piv1.GetAvailableModelsResponse], error) {
@@ -200,6 +258,14 @@ func (s *Service) DeleteSession(ctx context.Context, req *connect.Request[piv1.D
 
 func rpcError(err error) error {
 	switch {
+	case errors.Is(err, ErrHostConfig):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, ErrHostUnsupported), errors.Is(err, ErrHostGone):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	case errors.Is(err, ErrHostUnknown):
+		return connect.NewError(connect.CodeNotFound, err)
+	case errors.Is(err, ErrHostConflict):
+		return connect.NewError(connect.CodeAlreadyExists, err)
 	case errors.Is(err, ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, err)
 	case errors.Is(err, ErrBusy):

@@ -160,7 +160,7 @@ Each session maps to a supervised `pi --mode rpc` child process speaking pi's JS
 
 `CreateSession` accepts an optional `cwd` — the working directory for the pi process, absolute or relative to `SANDBOX_ROOT`. It must resolve inside the sandbox root and exist, or the call fails with `invalid_argument`; empty keeps the server's own working directory. The effective directory is reported back on the `Session` message, and re-attached sessions are respawned in the session's recorded cwd (read back from pi's session file header when needed).
 
-RPCs: `GetCapabilities` (Box API feature detection; no Pi process needed), `CreateSession`, `ListSessions` (every session on the box, newest first: active processes plus inactive sessions found on disk, each flagged `active` and stamped `updated_at_unix`), `GetSession`, `ListEntries` (the session transcript — see below), `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
+RPCs: `GetCapabilities` (Box API feature detection; no Pi process needed unless checking a supplied `session_id`), `CreateSession`, `ListSessions` (every session on the box, newest first: active processes plus inactive sessions found on disk, each flagged `active` and stamped `updated_at_unix`), `GetSession`, `ListEntries` (the session transcript — see below), `GetAvailableModels` (models pi can use, with provider, modalities, limits, and USD-per-million-token costs), `ListDirectories` (browse the sandbox root for a working-directory picker), `SendMessage` (unary, returns after the run fully settles), `SubmitMessage` + `GetTurn` (async: submit returns immediately with a turn cursor; poll or long-poll for the result — see below), `StreamMessage` (server stream of raw pi events, ends with `agent_settled`), `ListHostCalls`/`RespondHostCall` (opt-in per-turn host tools — see below), `AbortSession`, `DeleteSession` (`purge: true` also removes the session file).
 
 `ListEntries` is what a chat client renders from: it returns the session's entries verbatim as pi JSON (`message`, `model_change`, ... — each with its entry `id`), re-attaching the session if needed. Empty `after_cursor` returns the full transcript; passing the last entry id already seen (or a `SubmitMessage` turn cursor) returns only what came after, so a refresh loop polls incrementally. The response carries the current `leaf_id` (the next natural cursor) and `running` — during an in-flight run the listing grows as entries are recorded, so a polling client sees tool activity before the turn settles. An unknown cursor fails with `invalid_argument`.
 
@@ -207,6 +207,27 @@ curl -X POST http://127.0.0.1:8080/butterbox.pi.v1.PiService/SubmitMessage \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"<id>","message":"Continue the task","model_selection":{"provider":"anthropic","model_id":"<exact-model-id>"}}'
 ```
+
+### Per-turn host tools (`render_ui`)
+
+ButterBox includes a versioned, trusted Pi extension for forwarding `render_ui` to a host such as Butter. It is **off by default** and enables only transport, not A2UI card validation, storage or frontend rendering. New and re-attached API sessions load the extension explicitly; ordinary pi-web/Linear/Send/Stream runs do not inherit authorization.
+
+Deploy a relay-capable Box first. Before opting in, call `GetCapabilities` with `session_id` and require `host_tools_protocol_version: 1`, a matching `host_tools_contract_sha256`, and `host_tools_extension_ready: true`. Then submit `host_tools: {protocol_version: 1, contract_sha256: "<pinned contract hash>", allowed_tools: ["render_ui"], max_run_seconds: 1800}` alongside the message and optional `model_selection`. A missing/incompatible extension rejects the submission; upgrading Pi CLI alone does not connect Butter to A2UI. The bundled adapter is tested with Pi **1.2.0 and 1.3.0**.
+
+The response includes a unique `turn_id`, independent of `turn_cursor`. Use `ListHostCalls` with `session_id`, `turn_id` and optional `wait_seconds` to read pending calls **before** settlement. Reads are non-consuming and disconnection never cancels the run. After validating/persisting a card, use `RespondHostCall` with those identities plus `call_id` and exactly one of `result_json` (a JSON object, e.g. `{\"surface_id\":\"s1\",\"revision\":1,\"status\":\"created\"}`) or `error` (an ordinary tool error that lets Pi correct its arguments). Continue polling calls until `running: false`; use the existing `GetTurn`/`ListEntries` for final text/history. **Do not wait only on `GetTurn` while a tool is awaiting its host result.**
+
+Identical receipts are retryable, conflicting receipts are rejected, and calls cannot cross turns/sessions. Pending calls are revoked by `AbortSession`, settlement or process loss. Host-enabled runs have a bounded lifetime (default 30 minutes; maximum 24 hours); expiry stops the exact Pi process without retrying the prompt. Completed receipts are kept for up to 10 minutes/8 turns, only within the same process. Butter must deduplicate card writes and persist before acknowledging; Box does not promise cross-system exactly-once behavior.
+
+See the [complete v1 wire contract, limits and lifecycle](docs/pi-host-tools.md) and [shared tool contract](internal/pi/hostextension/render_ui.json). Typecheck and exercise the real extension/provider/host chain locally without external models:
+
+```bash
+npm ci --prefix internal/pi/hostextension --ignore-scripts
+npm run --prefix internal/pi/hostextension typecheck
+BUTTERBOX_PI_SMOKE=1 go test ./internal/pi -run '^TestRealPiHostRelay' -count=1 -v
+# Optional: BUTTERBOX_PI_SMOKE_BIN=/path/to/a/pinned/pi selects another runtime.
+```
+
+The CI matrix runs this deterministic relay suite on both supported Pi versions, alongside the Go contract/regression tests.
 
 ### Pi API verification
 
